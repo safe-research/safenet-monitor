@@ -24,7 +24,7 @@ impl ValidatorBalances {
         Ok(Self { provider, balances })
     }
 
-    pub async fn update(&self) -> anyhow::Result<()> {
+    pub async fn update(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 }

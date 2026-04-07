@@ -32,7 +32,7 @@ impl TransactionMonitor {
         })
     }
 
-    pub async fn update(&self) -> anyhow::Result<()> {
+    pub async fn update(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 }

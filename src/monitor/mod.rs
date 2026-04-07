@@ -24,11 +24,15 @@ fn create_provider(url: String) -> Provider {
     RootProvider::new(client)
 }
 
-pub struct Monitor {
-    registry: prometheus::Registry,
+struct Inner {
     transactions: TransactionMonitor,
     stake: ValidatorStake,
     balances: ValidatorBalances,
+}
+
+pub struct Monitor {
+    inner: tokio::sync::Mutex<Inner>,
+    registry: prometheus::Registry,
 }
 
 impl Monitor {
@@ -49,18 +53,33 @@ impl Monitor {
         let balances = ValidatorBalances::new(consensus, &registry)?;
 
         Ok(Self {
+            inner: tokio::sync::Mutex::new(Inner {
+                transactions,
+                stake,
+                balances,
+            }),
             registry,
-            transactions,
-            stake,
-            balances,
         })
     }
 
     pub async fn update(&self) {
+        let Ok(mut inner) = self.inner.try_lock() else {
+            // An update is already in progress; wait for it to finish so
+            // callers get fresh metrics, but don't trigger another update.
+            let _inner = self.inner.lock().await;
+            return;
+        };
+
+        let Inner {
+            transactions,
+            stake,
+            balances,
+        } = &mut *inner;
+
         let (transactions, stake, balances) = tokio::join!(
-            self.transactions.update(),
-            self.stake.update(),
-            self.balances.update(),
+            transactions.update(),
+            stake.update(),
+            balances.update(),
         );
 
         if let Err(err) = transactions {
