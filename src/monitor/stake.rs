@@ -31,5 +31,7 @@ impl ValidatorStake {
         })
     }
 
-    pub async fn update(&self) {}
+    pub async fn update(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

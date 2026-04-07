@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 alloy = "1"
+anyhow = "1"
 axum = { version = "0.8", features = ["macros"] }
 clap = { version = "4", features = ["derive", "env"] }
 prometheus = "0.14"

@@ -1,12 +1,13 @@
 mod monitor;
 
-use std::{io::IsTerminal as _, net::SocketAddr};
+use std::{io::IsTerminal as _, net::SocketAddr, sync::Arc};
 
 use alloy::primitives::Address;
-use axum::{Router, routing::get};
+use axum::{Router, extract::State, routing::get};
 use clap::Parser;
-use prometheus::{Encoder, TextEncoder};
 use tower_http::trace::TraceLayer;
+
+use monitor::Monitor;
 
 #[derive(Parser)]
 #[command(about = "Monitor the Safenet consensus contract and expose Prometheus metrics")]
@@ -50,9 +51,20 @@ async fn main() {
         "starting safenet-monitor",
     );
 
+    let monitor = Arc::new(
+        Monitor::new(
+            args.consensus_rpc,
+            args.staking_rpc,
+            args.consensus_contract,
+            args.staking_contract,
+        )
+        .expect("failed to initialize monitors"),
+    );
+
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .with_state(monitor);
 
     let listener = tokio::net::TcpListener::bind(args.metrics_address)
         .await
@@ -74,11 +86,10 @@ fn init_tracing(log_filter: &str) {
     }
 }
 
-async fn metrics_handler() -> impl axum::response::IntoResponse {
-    let encoder = TextEncoder::new();
-    let families = prometheus::gather();
-    let mut buffer = Vec::new();
-    encoder.encode(&families, &mut buffer).unwrap();
-    let content_type = encoder.format_type().to_owned();
-    ([(axum::http::header::CONTENT_TYPE, content_type)], buffer)
+async fn metrics_handler(
+    State(monitor): State<Arc<Monitor>>,
+) -> impl axum::response::IntoResponse {
+    monitor.update().await;
+    let (content_type, body) = monitor.encode();
+    ([(axum::http::header::CONTENT_TYPE, content_type)], body)
 }
