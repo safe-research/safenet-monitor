@@ -1,6 +1,6 @@
 mod monitor;
 
-use std::{io::IsTerminal as _, net::SocketAddr, time::Duration};
+use std::{io::IsTerminal as _, net::SocketAddr};
 
 use alloy::primitives::Address;
 use axum::{Router, routing::get};
@@ -19,10 +19,6 @@ struct Args {
     #[arg(long, env = "METRICS_ADDRESS", default_value = "127.0.0.1:3777")]
     metrics_address: SocketAddr,
 
-    /// How often to poll for updates, in fractional seconds.
-    #[arg(long, env = "UPDATE_PERIOD", default_value = "60", value_parser = parse_duration)]
-    update_period: Duration,
-
     /// Consensus chain RPC URL.
     #[arg(long, env = "CONSENSUS_RPC_URL")]
     consensus_rpc: String,
@@ -40,11 +36,6 @@ struct Args {
     staking_contract: Address,
 }
 
-fn parse_duration(s: &str) -> Result<Duration, String> {
-    let secs: f64 = s.parse().map_err(|e| format!("{e}"))?;
-    Ok(Duration::from_secs_f64(secs))
-}
-
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -56,7 +47,6 @@ async fn main() {
         staking_rpc = %args.staking_rpc,
         consensus_contract = %args.consensus_contract,
         staking_contract = %args.staking_contract,
-        update_period = %format_args!("{}s", args.update_period.as_secs_f64()),
         "starting safenet-monitor",
     );
 

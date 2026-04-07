@@ -1,16 +1,18 @@
 use alloy::primitives::Address;
 use prometheus::CounterVec;
 
+use super::Provider;
+
 /// Monitors Safenet consensus contract transactions and tracks attestation
 /// outcomes as Prometheus metrics.
 pub struct TransactionMonitor {
-    consensus_rpc: String,
+    provider: Provider,
     contract: Address,
     transactions: CounterVec,
 }
 
 impl TransactionMonitor {
-    pub fn new(consensus_rpc: String, contract: Address) -> Result<Self, prometheus::Error> {
+    pub fn new(provider: Provider, contract: Address) -> Result<Self, prometheus::Error> {
         let transactions = prometheus::register_counter_vec!(
             "transactions",
             "Transactions observed on the Safenet consensus contract, \
@@ -19,7 +21,7 @@ impl TransactionMonitor {
         )?;
 
         Ok(Self {
-            consensus_rpc,
+            provider,
             contract,
             transactions,
         })
