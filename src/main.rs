@@ -1,3 +1,5 @@
+mod monitor;
+
 use std::{io::IsTerminal as _, net::SocketAddr, time::Duration};
 
 use alloy::primitives::Address;
