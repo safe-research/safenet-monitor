@@ -1,9 +1,8 @@
 use alloy::{
-    primitives::Address,
-    providers::RootProvider,
-    rpc::client::ClientBuilder,
+    primitives::Address, providers::RootProvider, rpc::client::ClientBuilder,
     transports::layers::RetryBackoffLayer,
 };
+use anyhow::Context as _;
 use prometheus::{Encoder, TextEncoder};
 
 pub mod balances;
@@ -15,6 +14,30 @@ use stake::ValidatorStake;
 use transactions::TransactionMonitor;
 
 pub type Provider = RootProvider;
+
+/// A named validator and its on-chain address.
+#[derive(Clone)]
+pub struct Validator {
+    pub name: String,
+    pub address: Address,
+}
+
+impl std::str::FromStr for Validator {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (name, address) = s
+            .split_once(':')
+            .with_context(|| format!("expected NAME:ADDRESS, got {s:?}"))?;
+        let address = address
+            .parse()
+            .with_context(|| format!("invalid address {address:?}"))?;
+        Ok(Self {
+            name: name.to_owned(),
+            address,
+        })
+    }
+}
 
 fn create_provider(url: String) -> Provider {
     let url = url.parse().expect("invalid RPC URL");
@@ -41,6 +64,7 @@ impl Monitor {
         staking_rpc: String,
         consensus_contract: Address,
         staking_contract: Address,
+        validators: Vec<Validator>,
     ) -> Result<Self, prometheus::Error> {
         let registry = prometheus::Registry::new();
 
@@ -49,8 +73,8 @@ impl Monitor {
 
         let transactions =
             TransactionMonitor::new(consensus.clone(), consensus_contract, &registry)?;
-        let stake = ValidatorStake::new(staking, staking_contract, &registry)?;
-        let balances = ValidatorBalances::new(consensus, &registry)?;
+        let stake = ValidatorStake::new(staking, staking_contract, validators.clone(), &registry)?;
+        let balances = ValidatorBalances::new(consensus, validators, &registry)?;
 
         Ok(Self {
             inner: tokio::sync::Mutex::new(Inner {
@@ -76,11 +100,8 @@ impl Monitor {
             balances,
         } = &mut *inner;
 
-        let (transactions, stake, balances) = tokio::join!(
-            transactions.update(),
-            stake.update(),
-            balances.update(),
-        );
+        let (transactions, stake, balances) =
+            tokio::join!(transactions.update(), stake.update(), balances.update(),);
 
         if let Err(err) = transactions {
             tracing::error!(error = %err, "transaction monitor update failed");

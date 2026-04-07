@@ -1,13 +1,14 @@
 use alloy::primitives::Address;
 use prometheus::GaugeVec;
 
-use super::Provider;
+use super::{Provider, Validator};
 
 /// Monitors validator stake on the staking contract and tracks current stake
 /// amounts as Prometheus metrics.
 pub struct ValidatorStake {
     provider: Provider,
     contract: Address,
+    validators: Vec<Validator>,
     stake: GaugeVec,
 }
 
@@ -15,6 +16,7 @@ impl ValidatorStake {
     pub fn new(
         provider: Provider,
         contract: Address,
+        validators: Vec<Validator>,
         registry: &prometheus::Registry,
     ) -> Result<Self, prometheus::Error> {
         let stake = prometheus::register_gauge_vec_with_registry!(
@@ -27,6 +29,7 @@ impl ValidatorStake {
         Ok(Self {
             provider,
             contract,
+            validators,
             stake,
         })
     }

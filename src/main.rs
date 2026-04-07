@@ -7,7 +7,7 @@ use axum::{Router, extract::State, routing::get};
 use clap::Parser;
 use tower_http::trace::TraceLayer;
 
-use monitor::Monitor;
+use monitor::{Monitor, Validator};
 
 #[derive(Parser)]
 #[command(about = "Monitor the Safenet consensus contract and expose Prometheus metrics")]
@@ -35,6 +35,10 @@ struct Args {
     /// Safenet staking contract address on the staking chain.
     #[arg(long, env = "STAKING_CONTRACT")]
     staking_contract: Address,
+
+    /// Validator to monitor, in NAME:ADDRESS format (may be repeated).
+    #[arg(long = "validator", value_name = "NAME:ADDRESS")]
+    validators: Vec<Validator>,
 }
 
 #[tokio::main]
@@ -57,6 +61,7 @@ async fn main() {
             args.staking_rpc,
             args.consensus_contract,
             args.staking_contract,
+            args.validators,
         )
         .expect("failed to initialize monitors"),
     );
@@ -86,9 +91,7 @@ fn init_tracing(log_filter: &str) {
     }
 }
 
-async fn metrics_handler(
-    State(monitor): State<Arc<Monitor>>,
-) -> impl axum::response::IntoResponse {
+async fn metrics_handler(State(monitor): State<Arc<Monitor>>) -> impl axum::response::IntoResponse {
     monitor.update().await;
     let (content_type, body) = monitor.encode();
     ([(axum::http::header::CONTENT_TYPE, content_type)], body)
