@@ -10,11 +10,15 @@ pub struct ValidatorBalances {
 }
 
 impl ValidatorBalances {
-    pub fn new(provider: Provider) -> Result<Self, prometheus::Error> {
-        let balances = prometheus::register_gauge_vec!(
+    pub fn new(
+        provider: Provider,
+        registry: &prometheus::Registry,
+    ) -> Result<Self, prometheus::Error> {
+        let balances = prometheus::register_gauge_vec_with_registry!(
             "validator_balance",
             "Current native token balance per validator on the consensus chain.",
-            &["validator"]
+            &["validator"],
+            registry
         )?;
 
         Ok(Self { provider, balances })

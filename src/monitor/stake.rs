@@ -12,11 +12,16 @@ pub struct ValidatorStake {
 }
 
 impl ValidatorStake {
-    pub fn new(provider: Provider, contract: Address) -> Result<Self, prometheus::Error> {
-        let stake = prometheus::register_gauge_vec!(
+    pub fn new(
+        provider: Provider,
+        contract: Address,
+        registry: &prometheus::Registry,
+    ) -> Result<Self, prometheus::Error> {
+        let stake = prometheus::register_gauge_vec_with_registry!(
             "validator_stake",
             "Current stake amount per validator on the Safenet staking contract.",
-            &["validator"]
+            &["validator"],
+            registry
         )?;
 
         Ok(Self {

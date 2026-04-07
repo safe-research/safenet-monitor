@@ -12,12 +12,17 @@ pub struct TransactionMonitor {
 }
 
 impl TransactionMonitor {
-    pub fn new(provider: Provider, contract: Address) -> Result<Self, prometheus::Error> {
-        let transactions = prometheus::register_counter_vec!(
+    pub fn new(
+        provider: Provider,
+        contract: Address,
+        registry: &prometheus::Registry,
+    ) -> Result<Self, prometheus::Error> {
+        let transactions = prometheus::register_counter_vec_with_registry!(
             "transactions",
             "Transactions observed on the Safenet consensus contract, \
              labelled by validity and attestation outcome.",
-            &["status", "result"]
+            &["status", "result"],
+            registry
         )?;
 
         Ok(Self {
