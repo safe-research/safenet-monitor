@@ -5,7 +5,6 @@ use alloy::{
 use anyhow::Context as _;
 use prometheus::{Encoder, TextEncoder};
 
-mod bindings;
 mod utils;
 
 pub mod balances;
@@ -14,7 +13,7 @@ pub mod transactions;
 
 use balances::ValidatorBalances;
 use stake::ValidatorStake;
-use transactions::TransactionMonitor;
+use transactions::TransactionAttestations;
 
 pub type Provider = RootProvider;
 
@@ -51,7 +50,7 @@ fn create_provider(url: String) -> Provider {
 }
 
 struct Inner {
-    transactions: TransactionMonitor,
+    transactions: TransactionAttestations,
     stake: ValidatorStake,
     balances: ValidatorBalances,
 }
@@ -68,6 +67,7 @@ impl Monitor {
         consensus_contract: Address,
         staking_contract: Address,
         validators: Vec<Validator>,
+        attestation_duration: u64,
     ) -> Result<Self, prometheus::Error> {
         let registry = prometheus::Registry::new_custom(
             Some("safenet_monitor".to_string()),
@@ -77,8 +77,12 @@ impl Monitor {
         let consensus = create_provider(consensus_rpc);
         let staking = create_provider(staking_rpc);
 
-        let transactions =
-            TransactionMonitor::new(consensus.clone(), consensus_contract, &registry)?;
+        let transactions = TransactionAttestations::new(
+            consensus.clone(),
+            consensus_contract,
+            attestation_duration,
+            &registry,
+        )?;
         let stake = ValidatorStake::new(
             consensus.clone(),
             consensus_contract,

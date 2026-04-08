@@ -6,11 +6,8 @@ use alloy::{
 use anyhow::Context as _;
 use prometheus::GaugeVec;
 
-use super::{
-    Provider, Validator,
-    bindings::{IConsensus, IStaking},
-    utils,
-};
+use super::{Provider, Validator, utils};
+use crate::bindings::{IConsensus, IStaking};
 
 /// Monitors validator stake on the staking contract and tracks current stake
 /// amounts as Prometheus metrics.

@@ -1,4 +1,6 @@
+mod bindings;
 mod monitor;
+mod packets;
 
 use std::{io::IsTerminal as _, net::SocketAddr, sync::Arc};
 
@@ -39,6 +41,10 @@ struct Args {
     /// Validator to monitor, in NAME@ADDRESS format (may be repeated).
     #[arg(long = "validator", value_name = "NAME@ADDRESS")]
     validators: Vec<Validator>,
+
+    /// Maximum number of blocks it takes before a transaction is attested.
+    #[arg(long, env = "TRANSACTION_ATTESTATION_DURATION", default_value_t = 30)]
+    transaction_attestation_duration: u64,
 }
 
 #[tokio::main]
@@ -62,6 +68,7 @@ async fn main() {
             args.consensus_contract,
             args.staking_contract,
             args.validators,
+            args.transaction_attestation_duration,
         )
         .expect("failed to initialize monitors"),
     );

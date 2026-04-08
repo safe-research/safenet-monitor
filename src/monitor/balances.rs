@@ -76,7 +76,7 @@ impl ValidatorBalances {
             self.balances
                 .with_label_values(&[&validator.name])
                 .set(approx_balance);
-           tracing::debug!(
+            tracing::debug!(
                 validator =% validator.name,
                 balance =% approx_balance,
                 "updated validator account native token balance"
