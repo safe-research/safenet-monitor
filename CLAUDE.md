@@ -28,3 +28,26 @@ The service is built on:
 - **`tracing` + `tracing-subscriber`** — structured JSON logging
 
 The intended flow is: connect to a EVM RPCs (one on the staking chain and one on the consensus chain), subscribe to Safenet consensus contract transaction proposal and attestation events, query the validators' current stake amount, update Prometheus metrics, and serve those metrics over HTTP.
+
+## Multicall
+
+In order to save on RPC credits, we try to batch calls with the `alloy` multicall feature.
+
+``` rust
+let mut multicall = provider.multicall().dynamic();
+
+// For a list of validators, we can use `fold`.
+let multicall = validators.fold(
+    provider.multicall().dynamic(),
+    |multicall, validator| {
+        multicall.add_call_dynamic(
+            some_call()
+            // optionally allow failures...
+                .allow_failure(true)
+        )
+    }
+)
+
+// Now we can process the result, and check for failures for the sub-calls:
+multicall.aggregate3().await?;
+```

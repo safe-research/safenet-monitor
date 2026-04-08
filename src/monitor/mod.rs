@@ -5,6 +5,9 @@ use alloy::{
 use anyhow::Context as _;
 use prometheus::{Encoder, TextEncoder};
 
+mod bindings;
+mod utils;
+
 pub mod balances;
 pub mod stake;
 pub mod transactions;
@@ -76,7 +79,14 @@ impl Monitor {
 
         let transactions =
             TransactionMonitor::new(consensus.clone(), consensus_contract, &registry)?;
-        let stake = ValidatorStake::new(staking, staking_contract, validators.clone(), &registry)?;
+        let stake = ValidatorStake::new(
+            consensus.clone(),
+            consensus_contract,
+            staking,
+            staking_contract,
+            validators.clone(),
+            &registry,
+        )?;
         let balances = ValidatorBalances::new(consensus, validators, &registry)?;
 
         Ok(Self {
@@ -104,7 +114,7 @@ impl Monitor {
         } = &mut *inner;
 
         let (transactions, stake, balances) =
-            tokio::join!(transactions.update(), stake.update(), balances.update(),);
+            tokio::join!(transactions.update(), stake.update(), balances.update());
 
         if let Err(err) = transactions {
             tracing::error!(error = %err, "transactions update failed");

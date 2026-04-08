@@ -1,11 +1,22 @@
-use alloy::primitives::Address;
+use alloy::{
+    primitives::Address,
+    providers::{CallItem, Provider as _},
+    sol_types::SolCall as _,
+};
+use anyhow::Context as _;
 use prometheus::GaugeVec;
 
-use super::{Provider, Validator};
+use super::{
+    Provider, Validator,
+    bindings::{IConsensus, IStaking},
+    utils,
+};
 
 /// Monitors validator stake on the staking contract and tracks current stake
 /// amounts as Prometheus metrics.
 pub struct ValidatorStake {
+    consensus: Provider,
+    consensus_contract: Address,
     provider: Provider,
     contract: Address,
     validators: Vec<Validator>,
@@ -14,6 +25,8 @@ pub struct ValidatorStake {
 
 impl ValidatorStake {
     pub fn new(
+        consensus: Provider,
+        consensus_contract: Address,
         provider: Provider,
         contract: Address,
         validators: Vec<Validator>,
@@ -27,6 +40,8 @@ impl ValidatorStake {
         )?;
 
         Ok(Self {
+            consensus,
+            consensus_contract,
             provider,
             contract,
             validators,
@@ -35,6 +50,93 @@ impl ValidatorStake {
     }
 
     pub async fn update(&mut self) -> anyhow::Result<()> {
+        // Fetch the staker address for each validator from the consensus contract.
+        let staker_results = self
+            .validators
+            .iter()
+            .fold(
+                self.consensus.multicall().dynamic(),
+                |multicall, validator| {
+                    multicall.add_call_dynamic(
+                        CallItem::<IConsensus::getValidatorStakerCall>::new(
+                            self.consensus_contract,
+                            IConsensus::getValidatorStakerCall {
+                                validator: validator.address,
+                            }
+                            .abi_encode()
+                            .into(),
+                        )
+                        .allow_failure(true),
+                    )
+                },
+            )
+            .aggregate3()
+            .await
+            .context("failed to fetch validator stakers")?;
+
+        let validator_stakers: Vec<(&Validator, Address)> = self
+            .validators
+            .iter()
+            .zip(staker_results)
+            .filter_map(|(validator, result)| match result {
+                Ok(staker) => Some((validator, staker)),
+                Err(err) => {
+                    tracing::warn!(
+                        validator =% validator.name,
+                        error =% err,
+                        "failed to fetch validator staker",
+                    );
+                    None
+                }
+            })
+            .collect();
+
+        if validator_stakers.is_empty() {
+            return Ok(());
+        }
+
+        // Fetch the stake amount for each (staker, validator) pair from the staking contract.
+        let stake_results = validator_stakers
+            .iter()
+            .fold(
+                self.provider.multicall().dynamic(),
+                |multicall, (validator, staker)| {
+                    multicall.add_call_dynamic(
+                        CallItem::<IStaking::stakesCall>::new(
+                            self.contract,
+                            IStaking::stakesCall {
+                                staker: *staker,
+                                validator: validator.address,
+                            }
+                            .abi_encode()
+                            .into(),
+                        )
+                        .allow_failure(true),
+                    )
+                },
+            )
+            .aggregate3()
+            .await
+            .context("failed to fetch stake amounts")?;
+
+        for ((validator, _), result) in validator_stakers.iter().zip(stake_results) {
+            let amount = match result {
+                Ok(amount) => amount,
+                Err(err) => {
+                    tracing::warn!(
+                        validator =% validator.name,
+                        error =% err,
+                        "failed to fetch validator stake",
+                    );
+                    continue;
+                }
+            };
+
+            self.stake
+                .with_label_values(&[&validator.name])
+                .set(utils::approx_units(amount));
+        }
+
         Ok(())
     }
 }

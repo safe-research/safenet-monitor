@@ -1,12 +1,11 @@
 use alloy::{
-    primitives::{aliases::U256, utils},
     providers::{CallItem, MULTICALL3_ADDRESS, Provider as _, bindings::IMulticall3},
     sol_types::SolCall as _,
 };
 use anyhow::Context as _;
 use prometheus::GaugeVec;
 
-use super::{Provider, Validator};
+use super::{Provider, Validator, utils};
 
 /// Monitors validator native token balances on the consensus chain and tracks
 /// them as Prometheus metrics.
@@ -37,29 +36,31 @@ impl ValidatorBalances {
     }
 
     pub async fn update(&mut self) -> anyhow::Result<()> {
-        let multicall = self.validators.iter().fold(
-            self.provider.multicall().dynamic(),
-            |multicall, validator| {
-                multicall.add_call_dynamic(
-                    CallItem::<IMulticall3::getEthBalanceCall>::new(
-                        MULTICALL3_ADDRESS,
-                        IMulticall3::getEthBalanceCall {
-                            addr: validator.address,
-                        }
-                        .abi_encode()
-                        .into(),
+        let balance_results = self
+            .validators
+            .iter()
+            .fold(
+                self.provider.multicall().dynamic(),
+                |multicall, validator| {
+                    multicall.add_call_dynamic(
+                        CallItem::<IMulticall3::getEthBalanceCall>::new(
+                            MULTICALL3_ADDRESS,
+                            IMulticall3::getEthBalanceCall {
+                                addr: validator.address,
+                            }
+                            .abi_encode()
+                            .into(),
+                        )
+                        .allow_failure(true),
                     )
-                    .allow_failure(true),
-                )
-            },
-        );
-
-        let balances = multicall
+                },
+            )
             .aggregate3()
             .await
             .context("failed to fetch balances")?;
-        for (balance, validator) in balances.into_iter().zip(&self.validators) {
-            let balance = match balance {
+
+        for (validator, result) in self.validators.iter().zip(balance_results) {
+            let balance = match result {
                 Ok(value) => value,
                 Err(err) => {
                     tracing::warn!(
@@ -73,15 +74,9 @@ impl ValidatorBalances {
 
             self.balances
                 .with_label_values(&[&validator.name])
-                .set(approx_units(balance));
+                .set(utils::approx_units(balance));
         }
 
         Ok(())
     }
-}
-
-fn approx_units(value: U256) -> f64 {
-    utils::format_ether(value)
-        .parse::<f64>()
-        .expect("invalid formatted units")
 }
