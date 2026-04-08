@@ -2,7 +2,7 @@ use alloy::{
     primitives::Address, providers::RootProvider, rpc::client::ClientBuilder,
     transports::layers::RetryBackoffLayer,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use prometheus::{Encoder, TextEncoder};
 
 mod utils;
@@ -27,7 +27,7 @@ pub struct Validator {
 impl std::str::FromStr for Validator {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         let (name, address) = s
             .split_once('@')
             .with_context(|| format!("expected NAME@ADDRESS, got {s:?}"))?;
@@ -61,14 +61,14 @@ pub struct Monitor {
 }
 
 impl Monitor {
-    pub fn new(
+    pub async fn new(
         consensus_rpc: String,
         staking_rpc: String,
         consensus_contract: Address,
         staking_contract: Address,
         validators: Vec<Validator>,
         attestation_duration: u64,
-    ) -> Result<Self, prometheus::Error> {
+    ) -> Result<Self> {
         let registry = prometheus::Registry::new_custom(
             Some("safenet_monitor".to_string()),
             Default::default(),
@@ -82,7 +82,8 @@ impl Monitor {
             consensus_contract,
             attestation_duration,
             &registry,
-        )?;
+        )
+        .await?;
         let stake = ValidatorStake::new(
             consensus.clone(),
             consensus_contract,
@@ -121,13 +122,13 @@ impl Monitor {
             tokio::join!(transactions.update(), stake.update(), balances.update());
 
         if let Err(err) = transactions {
-            tracing::error!(error = %err, "transactions update failed");
+            tracing::warn!(error = %err, "transactions update failed");
         }
         if let Err(err) = stake {
-            tracing::error!(error = %err, "validator stake update failed");
+            tracing::warn!(error = %err, "validator stake update failed");
         }
         if let Err(err) = balances {
-            tracing::error!(error = %err, "validator balances update failed");
+            tracing::warn!(error = %err, "validator balances update failed");
         }
     }
 

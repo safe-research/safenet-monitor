@@ -70,6 +70,7 @@ async fn main() {
             args.validators,
             args.transaction_attestation_duration,
         )
+        .await
         .expect("failed to initialize monitors"),
     );
 

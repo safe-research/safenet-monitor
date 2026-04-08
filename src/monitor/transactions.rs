@@ -6,7 +6,7 @@ use alloy::{
     rpc::types::{BlockNumberOrTag, Filter},
     sol_types::{SolCall as _, SolEvent as _},
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use prometheus::{CounterVec, IntGauge};
 
 use super::Provider;
@@ -27,6 +27,7 @@ struct Proposal {
 pub struct TransactionAttestations {
     provider: Provider,
     contract: Address,
+    domain: ConsensusDomain,
     attestation_duration: u64,
     last_processed_block: Option<u64>,
     proposals: HashMap<B256, Proposal>,
@@ -35,12 +36,12 @@ pub struct TransactionAttestations {
 }
 
 impl TransactionAttestations {
-    pub fn new(
+    pub async fn new(
         provider: Provider,
         contract: Address,
         attestation_duration: u64,
         registry: &prometheus::Registry,
-    ) -> Result<Self, prometheus::Error> {
+    ) -> Result<Self> {
         let transactions = prometheus::register_counter_vec_with_registry!(
             "transactions",
             "Transactions observed on the Safenet consensus contract, \
@@ -53,10 +54,13 @@ impl TransactionAttestations {
             "Last consensus chain block processed by the transaction attestation monitor.",
             registry
         )?;
+        let chain_id = provider.get_chain_id().await?;
+        let domain = ConsensusDomain::new(chain_id, contract);
 
         Ok(Self {
             provider,
             contract,
+            domain,
             attestation_duration,
             last_processed_block: None,
             proposals: HashMap::new(),
@@ -65,7 +69,7 @@ impl TransactionAttestations {
         })
     }
 
-    pub async fn update(&mut self) -> anyhow::Result<()> {
+    pub async fn update(&mut self) -> Result<()> {
         let safe_block = self
             .provider
             .get_block_by_number(BlockNumberOrTag::Safe)
@@ -98,6 +102,7 @@ impl TransactionAttestations {
                     Ok(value) => value,
                     Err(err) => {
                         tracing::warn!(
+                            transaction =? log.transaction_hash,
                             error =% err,
                             "failed to decode TransactionProposed log",
                         );
@@ -105,7 +110,8 @@ impl TransactionAttestations {
                     }
                 };
 
-                let message = ConsensusDomain::new(event.chainId, event.safe)
+                let message = self
+                    .domain
                     .transaction_proposal(event.epoch, event.safeTxHash);
                 let proposal = Proposal {
                     safe_tx_hash: event.safeTxHash,
@@ -157,13 +163,13 @@ impl TransactionAttestations {
                     continue;
                 };
 
-                let signature_id = match result {
-                    Ok(value) => value,
+                let attested = match result {
+                    Ok(signature_id) => !signature_id.is_zero(),
                     Err(err) => {
                         tracing::warn!(
                             message =% message,
                             error =% err,
-                            "failed to get attestation signature ID, will retry",
+                            "failed to get attestation signature ID",
                         );
                         // Re-insert so we retry on the next update.
                         self.proposals.insert(*message, proposal);
@@ -175,12 +181,26 @@ impl TransactionAttestations {
                     safe_tx_hash =% proposal.safe_tx_hash,
                     epoch = proposal.epoch,
                     status = status_label(proposal.valid),
-                    result = result_label(signature_id),
+                    result = result_label(attested),
                     "recording transaction attestation outcome",
                 );
                 self.transactions
-                    .with_label_values(&[status_label(proposal.valid), result_label(signature_id)])
+                    .with_label_values(&[status_label(proposal.valid), result_label(attested)])
                     .inc();
+
+                match (proposal.valid, attested) {
+                    (true, false) => tracing::warn!(
+                        safe_tx_hash =% proposal.safe_tx_hash,
+                        epoch = proposal.epoch,
+                        "a valid transaction was not attested"
+                    ),
+                    (false, true) => tracing::error!(
+                        safe_tx_hash =% proposal.safe_tx_hash,
+                        epoch = proposal.epoch,
+                        "an invalid transaction was attested"
+                    ),
+                    _ => {}
+                }
             }
         }
 
@@ -192,10 +212,6 @@ fn status_label(valid: bool) -> &'static str {
     if valid { "valid" } else { "invalid" }
 }
 
-fn result_label(signature_id: B256) -> &'static str {
-    if signature_id.is_zero() {
-        "attested"
-    } else {
-        "unattested"
-    }
+fn result_label(attested: bool) -> &'static str {
+    if attested { "attested" } else { "unattested" }
 }

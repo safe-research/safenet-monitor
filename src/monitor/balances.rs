@@ -2,7 +2,7 @@ use alloy::{
     providers::{CallItem, MULTICALL3_ADDRESS, Provider as _, bindings::IMulticall3},
     sol_types::SolCall as _,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use prometheus::GaugeVec;
 
 use super::{Provider, Validator, utils};
@@ -20,7 +20,7 @@ impl ValidatorBalances {
         provider: Provider,
         validators: Vec<Validator>,
         registry: &prometheus::Registry,
-    ) -> Result<Self, prometheus::Error> {
+    ) -> Result<Self> {
         let balances = prometheus::register_gauge_vec_with_registry!(
             "validator_balance",
             "Current native token balance per validator on the consensus chain.",
@@ -35,7 +35,7 @@ impl ValidatorBalances {
         })
     }
 
-    pub async fn update(&mut self) -> anyhow::Result<()> {
+    pub async fn update(&mut self) -> Result<()> {
         let balance_results = self
             .validators
             .iter()

@@ -3,7 +3,7 @@ use alloy::{
     providers::{CallItem, Provider as _},
     sol_types::SolCall as _,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use prometheus::GaugeVec;
 
 use super::{Provider, Validator, utils};
@@ -28,7 +28,7 @@ impl ValidatorStake {
         contract: Address,
         validators: Vec<Validator>,
         registry: &prometheus::Registry,
-    ) -> Result<Self, prometheus::Error> {
+    ) -> Result<Self> {
         let stake = prometheus::register_gauge_vec_with_registry!(
             "validator_stake",
             "Current stake amount per validator on the Safenet staking contract.",
@@ -46,7 +46,7 @@ impl ValidatorStake {
         })
     }
 
-    pub async fn update(&mut self) -> anyhow::Result<()> {
+    pub async fn update(&mut self) -> Result<()> {
         // Fetch the staker address for each validator from the consensus contract.
         let staker_results = self
             .validators

@@ -1,9 +1,9 @@
 pub mod checks;
 
 use alloy::{
-    primitives::{Address, B256, U256},
+    primitives::{Address, B256},
     sol,
-    sol_types::{Eip712Domain, SolStruct as _},
+    sol_types::{Eip712Domain, SolStruct as _, eip712_domain},
 };
 
 sol! {
@@ -18,11 +18,10 @@ pub struct ConsensusDomain(Eip712Domain);
 
 impl ConsensusDomain {
     /// Creates a new consensus domain for the given chain ID and contract address.
-    pub fn new(chain_id: U256, address: Address) -> Self {
-        Self(Eip712Domain {
-            chain_id: Some(chain_id),
-            verifying_contract: Some(address),
-            ..Default::default()
+    pub fn new(chain_id: u64, address: Address) -> Self {
+        Self(eip712_domain! {
+            chain_id: chain_id,
+            verifying_contract: address,
         })
     }
 
@@ -43,10 +42,8 @@ mod tests {
 
     #[test]
     fn transaction_proposal_message() {
-        let domain = ConsensusDomain::new(
-            U256::from(100),
-            address!("223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9"),
-        );
+        let domain =
+            ConsensusDomain::new(100, address!("223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9"));
         let message = domain.transaction_proposal(
             31643,
             b256!("03c23f7abc44935b2f11d79f5095813afb0bb8bb53d8f03b5ee0458ca9968dc7"),
