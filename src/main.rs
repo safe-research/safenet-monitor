@@ -36,8 +36,8 @@ struct Args {
     #[arg(long, env = "STAKING_CONTRACT")]
     staking_contract: Address,
 
-    /// Validator to monitor, in NAME:ADDRESS format (may be repeated).
-    #[arg(long = "validator", value_name = "NAME:ADDRESS")]
+    /// Validator to monitor, in NAME@ADDRESS format (may be repeated).
+    #[arg(long = "validator", value_name = "NAME@ADDRESS")]
     validators: Vec<Validator>,
 }
 

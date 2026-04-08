@@ -27,8 +27,8 @@ impl std::str::FromStr for Validator {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (name, address) = s
-            .split_once(':')
-            .with_context(|| format!("expected NAME:ADDRESS, got {s:?}"))?;
+            .split_once('@')
+            .with_context(|| format!("expected NAME@ADDRESS, got {s:?}"))?;
         let address = address
             .parse()
             .with_context(|| format!("invalid address {address:?}"))?;
@@ -66,7 +66,10 @@ impl Monitor {
         staking_contract: Address,
         validators: Vec<Validator>,
     ) -> Result<Self, prometheus::Error> {
-        let registry = prometheus::Registry::new();
+        let registry = prometheus::Registry::new_custom(
+            Some("safenet_monitor".to_string()),
+            Default::default(),
+        )?;
 
         let consensus = create_provider(consensus_rpc);
         let staking = create_provider(staking_rpc);
@@ -104,13 +107,13 @@ impl Monitor {
             tokio::join!(transactions.update(), stake.update(), balances.update(),);
 
         if let Err(err) = transactions {
-            tracing::error!(error = %err, "transaction monitor update failed");
+            tracing::error!(error = %err, "transactions update failed");
         }
         if let Err(err) = stake {
-            tracing::error!(error = %err, "stake monitor update failed");
+            tracing::error!(error = %err, "validator stake update failed");
         }
         if let Err(err) = balances {
-            tracing::error!(error = %err, "balances monitor update failed");
+            tracing::error!(error = %err, "validator balances update failed");
         }
     }
 
