@@ -47,6 +47,10 @@ impl ValidatorStake {
     }
 
     pub async fn update(&mut self) -> Result<()> {
+        if self.validators.is_empty() {
+            return Ok(());
+        }
+
         // Fetch the staker address for each validator from the consensus contract.
         let staker_results = self
             .validators

@@ -36,6 +36,10 @@ impl ValidatorBalances {
     }
 
     pub async fn update(&mut self) -> Result<()> {
+        if self.validators.is_empty() {
+            return Ok(());
+        }
+
         let balance_results = self
             .validators
             .iter()
