@@ -132,9 +132,15 @@ impl ValidatorStake {
                 }
             };
 
+            let approx_amount = utils::approx_units(amount);
             self.stake
                 .with_label_values(&[&validator.name])
-                .set(utils::approx_units(amount));
+                .set(approx_amount);
+            tracing::debug!(
+                validator =% validator.name,
+                amount =% approx_amount,
+                "updated validator stake amount"
+            )
         }
 
         Ok(())

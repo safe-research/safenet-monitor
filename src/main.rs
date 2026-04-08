@@ -13,7 +13,7 @@ use monitor::{Monitor, Validator};
 #[command(about = "Monitor the Safenet consensus contract and expose Prometheus metrics")]
 struct Args {
     /// Tracing log filter directives.
-    #[arg(long, env = "LOG_FILTER", default_value = "info,safenet_monitor=debug")]
+    #[arg(long, env = "LOG_FILTER", default_value = "info")]
     log_filter: String,
 
     /// Address to bind the Prometheus metrics HTTP server to.

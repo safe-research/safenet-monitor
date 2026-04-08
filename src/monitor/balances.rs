@@ -72,9 +72,15 @@ impl ValidatorBalances {
                 }
             };
 
+            let approx_balance = utils::approx_units(balance);
             self.balances
                 .with_label_values(&[&validator.name])
-                .set(utils::approx_units(balance));
+                .set(approx_balance);
+           tracing::debug!(
+                validator =% validator.name,
+                balance =% approx_balance,
+                "updated validator account native token balance"
+            )
         }
 
         Ok(())
