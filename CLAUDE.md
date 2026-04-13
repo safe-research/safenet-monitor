@@ -51,7 +51,7 @@ A multi-stage `Dockerfile` builds a release binary in `rust:1-slim` and produces
 
 GitHub Actions workflows live in `.github/workflows/`:
 - **`ci.yml`** — runs on PRs and pushes to `main`: `cargo fmt --all --check`, `cargo clippy -- -D warnings`, `cargo test`.
-- **`docker.yml`** — builds and pushes to `ghcr.io/safe-fndn/safenet-monitor` on pushes to `main` and version tags; builds (but does not push) on PRs.
+- **`docker.yml`** — builds and pushes to `ghcr.io/safe-research/safenet-monitor` on pushes to `main` and version tags; builds (but does not push) on PRs.
 
 ## Multicall
 

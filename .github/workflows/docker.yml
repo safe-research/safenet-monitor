@@ -26,7 +26,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/safe-fndn/safenet-monitor
+          images: ghcr.io/safe-research/safenet-monitor
 
       - uses: docker/build-push-action@v6
         with:
