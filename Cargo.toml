@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-alloy = "1"
+alloy = { version = "1", features = ["serde"] }
 anyhow = "1"
 axum = { version = "0.8", features = ["macros"] }
 argh = "0.1"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
 prometheus = "0.14"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 tower-http = { version = "0.6", features = ["trace"] }

@@ -86,6 +86,7 @@ impl TransactionAttestations {
             .checked_add(1)
             .context("we have reached the heat death of the universe")?;
         if from_block <= safe_block {
+            tracing::debug!(%from_block, to_block =% safe_block, "querying transaction proposals");
             let filter = Filter::new()
                 .address(self.contract)
                 .event(IConsensus::TransactionProposed::SIGNATURE)

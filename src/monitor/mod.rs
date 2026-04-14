@@ -2,7 +2,7 @@ use alloy::{
     primitives::Address, providers::RootProvider, rpc::client::ClientBuilder,
     transports::layers::RetryBackoffLayer,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use prometheus::{Encoder, TextEncoder};
 
 mod utils;
@@ -18,27 +18,10 @@ use transactions::TransactionAttestations;
 pub type Provider = RootProvider;
 
 /// A named validator and its on-chain address.
-#[derive(Clone)]
+#[derive(Clone, serde::Deserialize)]
 pub struct Validator {
     pub name: String,
     pub address: Address,
-}
-
-impl std::str::FromStr for Validator {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        let (name, address) = s
-            .split_once('@')
-            .with_context(|| format!("expected NAME@ADDRESS, got {s:?}"))?;
-        let address = address
-            .parse()
-            .with_context(|| format!("invalid address {address:?}"))?;
-        Ok(Self {
-            name: name.to_owned(),
-            address,
-        })
-    }
 }
 
 fn create_provider(url: String) -> Provider {
