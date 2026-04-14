@@ -5,51 +5,61 @@ mod packets;
 use std::{io::IsTerminal as _, net::SocketAddr, sync::Arc};
 
 use alloy::primitives::Address;
+use argh::FromArgs;
 use axum::{Router, extract::State, routing::get};
-use clap::Parser;
 use tower_http::trace::TraceLayer;
 
 use monitor::{Monitor, Validator};
 
-#[derive(Parser)]
-#[command(about = "Monitor the Safenet consensus contract and expose Prometheus metrics")]
+/// Monitor the Safenet consensus contract and expose Prometheus metrics.
+#[derive(FromArgs)]
 struct Args {
-    /// Tracing log filter directives.
-    #[arg(long, env = "LOG_FILTER", default_value = "info")]
+    /// tracing log filter directives (default: info)
+    #[argh(option, default = r#""info".to_owned()"#)]
     log_filter: String,
 
-    /// Address to bind the Prometheus metrics HTTP server to.
-    #[arg(long, env = "METRICS_ADDRESS", default_value = "127.0.0.1:3777")]
+    /// address to bind the Prometheus metrics HTTP server to (default:
+    /// 127.0.0.1:3777)
+    #[argh(option, default = r#""127.0.0.1:3777".parse().unwrap()"#)]
     metrics_address: SocketAddr,
 
-    /// Consensus chain RPC URL.
-    #[arg(long, env = "CONSENSUS_RPC_URL")]
+    /// consensus chain RPC URL
+    #[argh(option)]
     consensus_rpc: String,
 
-    /// Staking chain RPC URL.
-    #[arg(long, env = "STAKING_RPC_URL")]
+    /// staking chain RPC URL
+    #[argh(option)]
     staking_rpc: String,
 
-    /// Safenet consensus contract address on the consensus chain.
-    #[arg(long, env = "CONSENSUS_CONTRACT")]
+    /// safenet consensus contract address on the consensus chain (default:
+    /// 0x223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9)
+    #[argh(
+        option,
+        default = r#""0x223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9".parse().unwrap()"#
+    )]
     consensus_contract: Address,
 
-    /// Safenet staking contract address on the staking chain.
-    #[arg(long, env = "STAKING_CONTRACT")]
+    /// safenet staking contract address on the staking chain (default:
+    /// 0x115E78f160e1E3eF163B05C84562Fa16fA338509)
+    #[argh(
+        option,
+        default = r#""0x115E78f160e1E3eF163B05C84562Fa16fA338509".parse().unwrap()"#
+    )]
     staking_contract: Address,
 
-    /// Validator to monitor, in NAME@ADDRESS format (may be repeated).
-    #[arg(long = "validator", value_name = "NAME@ADDRESS")]
+    /// validator to monitor, in NAME@ADDRESS format (may be repeated)
+    #[argh(option, arg_name = "NAME@ADDRESS")]
     validators: Vec<Validator>,
 
-    /// Maximum number of blocks it takes before a transaction is attested.
-    #[arg(long, env = "TRANSACTION_ATTESTATION_DURATION", default_value_t = 30)]
+    /// maximum number of blocks it takes before a transaction is attested
+    /// (default: 30)
+    #[argh(option, default = "30")]
     transaction_attestation_duration: u64,
 }
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
+    let args = argh::from_env::<Args>();
 
     init_tracing(&args.log_filter);
 
