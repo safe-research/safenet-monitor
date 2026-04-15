@@ -54,6 +54,15 @@ impl TransactionAttestations {
             "Last consensus chain block processed by the transaction attestation monitor.",
             registry
         )?;
+
+        // Make sure to intialize all possible labels for our metric, so that
+        // we have 0-values instead of "No data" in our queries.
+        for status in ["valid", "invalid"] {
+            for result in ["attested", "unattested"] {
+                transactions.with_label_values(&[status, result]).reset();
+            }
+        }
+
         let chain_id = provider.get_chain_id().await?;
         let domain = ConsensusDomain::new(chain_id, contract);
 
