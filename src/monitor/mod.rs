@@ -8,10 +8,12 @@ use prometheus::{Encoder, TextEncoder};
 mod utils;
 
 pub mod balances;
+pub mod gas;
 pub mod stake;
 pub mod transactions;
 
 use balances::ValidatorBalances;
+use gas::BaseGasFee;
 use stake::ValidatorStake;
 use transactions::TransactionAttestations;
 
@@ -36,6 +38,7 @@ struct Inner {
     transactions: TransactionAttestations,
     stake: ValidatorStake,
     balances: ValidatorBalances,
+    gas: BaseGasFee,
 }
 
 pub struct Monitor {
@@ -75,13 +78,15 @@ impl Monitor {
             validators.clone(),
             &registry,
         )?;
-        let balances = ValidatorBalances::new(consensus, validators, &registry)?;
+        let balances = ValidatorBalances::new(consensus.clone(), validators, &registry)?;
+        let gas = BaseGasFee::new(consensus, &registry)?;
 
         Ok(Self {
             inner: tokio::sync::Mutex::new(Inner {
                 transactions,
                 stake,
                 balances,
+                gas,
             }),
             registry,
         })
@@ -99,10 +104,15 @@ impl Monitor {
             transactions,
             stake,
             balances,
+            gas,
         } = &mut *inner;
 
-        let (transactions, stake, balances) =
-            tokio::join!(transactions.update(), stake.update(), balances.update());
+        let (transactions, stake, balances, gas) = tokio::join!(
+            transactions.update(),
+            stake.update(),
+            balances.update(),
+            gas.update(),
+        );
 
         if let Err(err) = transactions {
             tracing::warn!(error = %err, "transactions update failed");
@@ -112,6 +122,9 @@ impl Monitor {
         }
         if let Err(err) = balances {
             tracing::warn!(error = %err, "validator balances update failed");
+        }
+        if let Err(err) = gas {
+            tracing::warn!(error = %err, "base gas fee update failed");
         }
     }
 
