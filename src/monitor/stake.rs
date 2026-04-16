@@ -165,7 +165,7 @@ impl TotalStake {
         registry: &prometheus::Registry,
     ) -> Result<Self> {
         let stake = prometheus::register_gauge_with_registry!(
-            "safenet_monitor_total_stake",
+            "total_stake",
             "Total stake amount on the Safenet staking contract.",
             registry
         )?;
