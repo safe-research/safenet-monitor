@@ -103,37 +103,33 @@ impl Monitor {
             return;
         };
 
-        let Inner {
-            transactions,
-            validator_stake,
-            total_stake,
-            balances,
-            gas,
-        } = &mut *inner;
+        macro_rules! join_updates {
+            ($($submonitor:ident as $name:literal,)*) => {
+                let Inner {$(
+                    $submonitor,
+                )*} = &mut *inner;
 
-        let (transactions, validator_stake, total_stake, balances, gas) = tokio::join!(
-            transactions.update(),
-            validator_stake.update(),
-            total_stake.update(),
-            balances.update(),
-            gas.update(),
+                let ($(
+                    $submonitor,
+                )*) = tokio::join!($(
+                    $submonitor.update(),
+                )*);
+
+                $(
+                    if let Err(err) = $submonitor {
+                        tracing::warn!(error = %err, concat!($name, " update failed"));
+                    }
+                )*
+            };
+        }
+
+        join_updates!(
+            transactions as "transactions",
+            validator_stake as "validator stake",
+            total_stake as "total stake",
+            balances as "validator balances",
+            gas as "gas fees",
         );
-
-        if let Err(err) = transactions {
-            tracing::warn!(error = %err, "transactions update failed");
-        }
-        if let Err(err) = validator_stake {
-            tracing::warn!(error = %err, "validator stake update failed");
-        }
-        if let Err(err) = total_stake {
-            tracing::warn!(error = %err, "total stake update failed");
-        }
-        if let Err(err) = balances {
-            tracing::warn!(error = %err, "validator balances update failed");
-        }
-        if let Err(err) = gas {
-            tracing::warn!(error = %err, "gas fees update failed");
-        }
     }
 
     pub fn encode(&self) -> (String, Vec<u8>) {
