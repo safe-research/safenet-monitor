@@ -14,7 +14,7 @@ pub mod transactions;
 
 use balances::ValidatorBalances;
 use gas::BaseGasFee;
-use stake::ValidatorStake;
+use stake::{TotalStake, ValidatorStake};
 use transactions::TransactionAttestations;
 
 pub type Provider = RootProvider;
@@ -36,7 +36,8 @@ fn create_provider(url: String) -> Provider {
 
 struct Inner {
     transactions: TransactionAttestations,
-    stake: ValidatorStake,
+    validator_stake: ValidatorStake,
+    total_stake: TotalStake,
     balances: ValidatorBalances,
     gas: BaseGasFee,
 }
@@ -70,21 +71,23 @@ impl Monitor {
             &registry,
         )
         .await?;
-        let stake = ValidatorStake::new(
+        let validator_stake = ValidatorStake::new(
             consensus.clone(),
             consensus_contract,
-            staking,
+            staking.clone(),
             staking_contract,
             validators.clone(),
             &registry,
         )?;
+        let total_stake = TotalStake::new(staking, staking_contract, &registry)?;
         let balances = ValidatorBalances::new(consensus.clone(), validators, &registry)?;
         let gas = BaseGasFee::new(consensus, &registry)?;
 
         Ok(Self {
             inner: tokio::sync::Mutex::new(Inner {
                 transactions,
-                stake,
+                validator_stake,
+                total_stake,
                 balances,
                 gas,
             }),
@@ -102,14 +105,16 @@ impl Monitor {
 
         let Inner {
             transactions,
-            stake,
+            validator_stake,
+            total_stake,
             balances,
             gas,
         } = &mut *inner;
 
-        let (transactions, stake, balances, gas) = tokio::join!(
+        let (transactions, validator_stake, total_stake, balances, gas) = tokio::join!(
             transactions.update(),
-            stake.update(),
+            validator_stake.update(),
+            total_stake.update(),
             balances.update(),
             gas.update(),
         );
@@ -117,8 +122,11 @@ impl Monitor {
         if let Err(err) = transactions {
             tracing::warn!(error = %err, "transactions update failed");
         }
-        if let Err(err) = stake {
+        if let Err(err) = validator_stake {
             tracing::warn!(error = %err, "validator stake update failed");
+        }
+        if let Err(err) = total_stake {
+            tracing::warn!(error = %err, "total stake update failed");
         }
         if let Err(err) = balances {
             tracing::warn!(error = %err, "validator balances update failed");

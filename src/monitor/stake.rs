@@ -1,10 +1,12 @@
 use alloy::{
+    network::TransactionBuilder as _,
     primitives::Address,
     providers::{CallItem, Provider as _},
+    rpc::types::TransactionRequest,
     sol_types::SolCall as _,
 };
 use anyhow::{Context as _, Result};
-use prometheus::GaugeVec;
+use prometheus::{Gauge, GaugeVec};
 
 use super::{Provider, Validator, utils};
 use crate::bindings::{IConsensus, IStaking};
@@ -143,6 +145,53 @@ impl ValidatorStake {
                 "updated validator stake amount"
             )
         }
+
+        Ok(())
+    }
+}
+
+/// Monitors total stake on the staking contract and tracks it as a Prometheus
+/// metric.
+pub struct TotalStake {
+    provider: Provider,
+    contract: Address,
+    stake: Gauge,
+}
+
+impl TotalStake {
+    pub fn new(
+        provider: Provider,
+        contract: Address,
+        registry: &prometheus::Registry,
+    ) -> Result<Self> {
+        let stake = prometheus::register_gauge_with_registry!(
+            "safenet_monitor_total_stake",
+            "Total stake amount on the Safenet staking contract.",
+            registry
+        )?;
+
+        Ok(Self {
+            provider,
+            contract,
+            stake,
+        })
+    }
+
+    pub async fn update(&mut self) -> Result<()> {
+        let tx = TransactionRequest::default()
+            .with_to(self.contract)
+            .with_input(IStaking::totalStakedAmountCall {}.abi_encode());
+        let raw = self
+            .provider
+            .call(tx)
+            .await
+            .context("failed to fetch total staked amount")?;
+        let amount = IStaking::totalStakedAmountCall::abi_decode_returns(&raw)
+            .context("failed to decode total staked amount")?;
+
+        let approx_amount = utils::approx_units(amount);
+        self.stake.set(approx_amount);
+        tracing::debug!(amount =% approx_amount, "updated total stake amount");
 
         Ok(())
     }

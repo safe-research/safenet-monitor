@@ -26,7 +26,7 @@ src/
 ├── monitor/
 │   ├── mod.rs                  # Monitor struct, provider setup, update() + encode()
 │   ├── transactions.rs         # TransactionAttestations monitor
-│   ├── stake.rs                # ValidatorStake monitor
+│   ├── stake.rs                # ValidatorStake + TotalStake monitors
 │   ├── balances.rs             # ValidatorBalances monitor
 │   ├── gas.rs                  # BaseGasFee monitor
 │   └── utils.rs                # approx_units(): U256 → f64 token amount
@@ -48,7 +48,7 @@ The service is built on:
 - **`argh`** — CLI argument parsing
 - **`tracing` + `tracing-subscriber`** — structured logging (human format on TTY, JSON otherwise)
 
-**Execution model**: updates are on-demand, not on a background timer. Each `GET /metrics` request calls `monitor.update()`, which runs all four monitor subsystems concurrently via `tokio::join!()`. A `tokio::sync::Mutex` ensures concurrent requests don't trigger redundant updates — the second caller waits for the first to finish and returns the freshly updated metrics.
+**Execution model**: updates are on-demand, not on a background timer. Each `GET /metrics` request calls `monitor.update()`, which runs all monitor subsystems concurrently via `tokio::join!()`. A `tokio::sync::Mutex` ensures concurrent requests don't trigger redundant updates — the second caller waits for the first to finish and returns the freshly updated metrics.
 
 ## Configuration
 
@@ -99,6 +99,14 @@ Reads each validator's stake via two sequential multicall batches:
 
 - `safenet_monitor_validator_stake{validator}` — gauge; stake in token units (via `utils::approx_units()`).
 
+### TotalStake (`stake.rs`)
+
+Reads the aggregate stake on the staking contract via a single call to `IStaking.totalStakedAmount()`.
+
+**Metrics**:
+
+- `safenet_monitor_total_stake` — gauge; total stake in token units (via `utils::approx_units()`).
+
 ### ValidatorBalances (`balances.rs`)
 
 Fetches each validator's native token balance on the consensus chain using `IMulticall3.getEthBalance()`.
@@ -121,6 +129,7 @@ Fetches the base gas fee on the consensus chain using `eth_feeHistory(1, "latest
 2. Add the new struct as a field on `Inner` in `src/monitor/mod.rs`.
 3. Instantiate it inside `Monitor::new()` and add it to the `tokio::join!()` in `Monitor::update()`.
 4. Wire any new config fields through `Config` in `main.rs` and pass them into `Monitor::new()`.
+5. Update this file to include information on the new monitor.
 
 ## Transaction Checks
 

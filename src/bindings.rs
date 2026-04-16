@@ -31,5 +31,6 @@ sol! {
 
     interface IStaking {
         function stakes(address staker, address validator) external view returns (uint256 amount);
+        function totalStakedAmount() external view returns (uint256 amount);
     }
 }
