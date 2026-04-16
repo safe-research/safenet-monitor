@@ -13,7 +13,7 @@ pub mod stake;
 pub mod transactions;
 
 use balances::ValidatorBalances;
-use gas::BaseGasFee;
+use gas::GasFees;
 use stake::{TotalStake, ValidatorStake};
 use transactions::TransactionAttestations;
 
@@ -39,7 +39,7 @@ struct Inner {
     validator_stake: ValidatorStake,
     total_stake: TotalStake,
     balances: ValidatorBalances,
-    gas: BaseGasFee,
+    gas: GasFees,
 }
 
 pub struct Monitor {
@@ -81,7 +81,7 @@ impl Monitor {
         )?;
         let total_stake = TotalStake::new(staking, staking_contract, &registry)?;
         let balances = ValidatorBalances::new(consensus.clone(), validators, &registry)?;
-        let gas = BaseGasFee::new(consensus, &registry)?;
+        let gas = GasFees::new(consensus, &registry)?;
 
         Ok(Self {
             inner: tokio::sync::Mutex::new(Inner {
@@ -132,7 +132,7 @@ impl Monitor {
             tracing::warn!(error = %err, "validator balances update failed");
         }
         if let Err(err) = gas {
-            tracing::warn!(error = %err, "base gas fee update failed");
+            tracing::warn!(error = %err, "gas fees update failed");
         }
     }
 
