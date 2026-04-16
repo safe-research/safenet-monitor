@@ -64,6 +64,17 @@ pub fn decode_multi_send(
         });
     }
 
+    if let Some(last) = result.last() {
+        // There is a known issue with the `beta` version of the validators,
+        // where multisends where the last transaction has no data is considered
+        // invalid (despite being valid). Make sure to replicate that behaviour
+        // for computing metrics
+        ensure!(
+            !last.data.is_empty(),
+            "final multi-send transaction with no data considered invalid"
+        );
+    }
+
     Ok(result)
 }
 

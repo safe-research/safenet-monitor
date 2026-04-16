@@ -455,6 +455,38 @@ mod tests {
     }
 
     #[test]
+    fn denies_multisend_where_last_sub_tx_has_no_data() {
+        // Emulation of a known bug in the `beta` validator release: a multisend
+        // whose final sub-transaction has empty calldata is rejected, even
+        // though the sub-transaction is otherwise valid (e.g. a plain ETH
+        // transfer). We replicate this so our metrics stay consistent with what
+        // validators actually enforce.
+        let safe = address!("3850cd76006dc6CaCBCBB514995C47Ca8Ad0bb96");
+        let recipient = address!("C92E8bdf79f0507f65a392b0ab4667716BFE0110");
+
+        let data = multisend(&[pack(0, recipient, U256::from(1u64), &[])]);
+        assert!(!check_transaction(&tx(
+            safe,
+            address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
+            U256::ZERO,
+            data,
+            1,
+        )));
+    }
+
+    #[test]
+    fn allows_empty_multisend() {
+        let safe = address!("3850cd76006dc6CaCBCBB514995C47Ca8Ad0bb96");
+        assert!(check_transaction(&tx(
+            safe,
+            address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
+            U256::ZERO,
+            multisend(&[]),
+            1,
+        )));
+    }
+
+    #[test]
     fn denies_delegatecall_via_multisend_to_disallowed_target() {
         let safe = address!("1db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4");
         // Multisend containing a delegatecall to a non-whitelisted address.
