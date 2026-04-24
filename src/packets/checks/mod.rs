@@ -67,14 +67,11 @@ fn check_calls(tx: &SafeTransaction) -> bool {
     if tx.data.is_empty() {
         return true;
     }
-    if !tx.value.is_zero() {
-        return false;
-    }
     check_self_calls(tx)
 }
 
-/// Checks that a zero-value self-call targets one of the allowed Safe
-/// management functions (with argument validation where necessary).
+/// Checks that a self-call targets one of the allowed Safe management
+/// functions (with argument validation where necessary).
 fn check_self_calls(tx: &SafeTransaction) -> bool {
     // No-arg checks: any calldata starting with the right selector is allowed.
     if tx
@@ -296,6 +293,19 @@ mod tests {
             address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
             address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
             U256::ZERO,
+            hex(
+                "0xe318b52b0000000000000000000000002dc63c83040669f0adba5f832f713152ba862c97000000000000000000000000e7f8c378df23ebb06d5fc5a33bd471ef510f8cc9000000000000000000000000baf055b4ae60b897649f654df8def87bb4f86299"
+            ),
+            0,
+        )));
+    }
+
+    #[test]
+    fn allows_self_call_with_nonzero_value() {
+        assert!(check_transaction(&tx(
+            address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
+            address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
+            U256::from(1u64),
             hex(
                 "0xe318b52b0000000000000000000000002dc63c83040669f0adba5f832f713152ba862c97000000000000000000000000e7f8c378df23ebb06d5fc5a33bd471ef510f8cc9000000000000000000000000baf055b4ae60b897649f654df8def87bb4f86299"
             ),
