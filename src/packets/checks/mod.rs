@@ -167,7 +167,7 @@ fn check_delegate_calls(tx: &SafeTransaction) -> bool {
 /// Delegate calls to known multi-send contracts are allowed when each packed
 /// sub-transaction passes the appropriate check.
 fn check_multi_send(tx: &SafeTransaction) -> bool {
-    if tx.operation != 1 || !tx.value.is_zero() {
+    if tx.operation != 1 {
         return false;
     }
     let Ok(call) = bindings::multiSendCall::abi_decode(&tx.data) else {
@@ -477,6 +477,21 @@ mod tests {
             address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
             U256::ZERO,
             multisend(&[]),
+            1,
+        )));
+    }
+
+    #[test]
+    fn allows_multisend_with_nonzero_value() {
+        let safe = address!("3850cd76006dc6CaCBCBB514995C47Ca8Ad0bb96");
+        let recipient = address!("C92E8bdf79f0507f65a392b0ab4667716BFE0110");
+
+        let data = multisend(&[pack(0, recipient, U256::from(1u64), &[])]);
+        assert!(check_transaction(&tx(
+            safe,
+            address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
+            U256::from(1u64),
+            data,
             1,
         )));
     }
