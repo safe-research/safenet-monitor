@@ -130,7 +130,7 @@ fn check_self_calls(tx: &SafeTransaction) -> bool {
 /// Delegate calls are restricted to known Safe migration and signing-library
 /// contracts, each with a fixed set of allowed function selectors.
 fn check_delegate_calls(tx: &SafeTransaction) -> bool {
-    if tx.operation != 1 || !tx.value.is_zero() {
+    if tx.operation != 1 {
         return false;
     }
 
@@ -346,6 +346,17 @@ mod tests {
             address!("81a45AA50195f0A752159d5198780cDfb8e19732"),
             address!("526643F69b81B008F46d95CD5ced5eC0edFFDaC6"),
             U256::ZERO,
+            hex("0xed007fc6"),
+            1,
+        )));
+    }
+
+    #[test]
+    fn allows_delegate_call_with_nonzero_value() {
+        assert!(check_transaction(&tx(
+            address!("81a45AA50195f0A752159d5198780cDfb8e19732"),
+            address!("526643F69b81B008F46d95CD5ced5eC0edFFDaC6"),
+            U256::from(1u64),
             hex("0xed007fc6"),
             1,
         )));
