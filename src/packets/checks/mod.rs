@@ -25,6 +25,8 @@ mod bindings {
         function migrateL2WithFallbackHandler();
         function signMessage(bytes message);
         function multiSend(bytes transactions);
+        function performCreate(uint256 value, bytes deploymentData);
+        function performCreate2(uint256 value, bytes deploymentData, bytes32 salt);
     }
 }
 
@@ -159,6 +161,17 @@ fn check_delegate_calls(tx: &SafeTransaction) -> bool {
     ];
     if SIGN_MESSAGE_LIBS.contains(&tx.to) {
         return tx.data.starts_with(&bindings::signMessageCall::SELECTOR);
+    }
+
+    const CREATE_CALL_CONTRACTS: &[Address] = &[
+        address!("7cbB62EaA69F79e6873cD1ecB2392971036cFAa4"), // 1.3.0 - canonical
+        address!("B19D6FFc2182150F8Eb585b79D4ABcd7C5640A9d"), // 1.3.0 - eip155
+        address!("9b35Af71d77eaf8d7e40252370304687390A1A52"), // 1.4.1
+        address!("2Ef5ECfbea521449E4De05EDB1ce63B75eDA90B4"), // 1.5.0
+    ];
+    if CREATE_CALL_CONTRACTS.contains(&tx.to) {
+        return tx.data.starts_with(&bindings::performCreateCall::SELECTOR)
+            || tx.data.starts_with(&bindings::performCreate2Call::SELECTOR);
     }
 
     false
@@ -515,6 +528,43 @@ mod tests {
             assert!(
                 !check_transaction(&tx(safe, multisend_addr, U256::ZERO, data.clone(), 1)),
                 "multisend at {multisend_addr} should deny delegatecall to disallowed target",
+            );
+        }
+    }
+
+    #[test]
+    fn allows_contract_deployment_via_create_call() {
+        let safe = address!("8cf60b289f8d31f737049b590b5e4285ff0bd1d1");
+
+        for create_call_addr in [
+            address!("7cbB62EaA69F79e6873cD1ecB2392971036cFAa4"), // 1.3.0 - canonical
+            address!("B19D6FFc2182150F8Eb585b79D4ABcd7C5640A9d"), // 1.3.0 - eip155
+            address!("9b35Af71d77eaf8d7e40252370304687390A1A52"), // 1.4.1
+            address!("2Ef5ECfbea521449E4De05EDB1ce63B75eDA90B4"), // 1.5.0
+        ] {
+            let data = Bytes::from(
+                bindings::performCreateCall {
+                    value: U256::ZERO,
+                    deploymentData: Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]),
+                }
+                .abi_encode(),
+            );
+            assert!(
+                check_transaction(&tx(safe, create_call_addr, U256::ZERO, data, 1)),
+                "should allow performCreate delegatecall to {create_call_addr}",
+            );
+
+            let data = Bytes::from(
+                bindings::performCreate2Call {
+                    value: U256::ZERO,
+                    deploymentData: Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]),
+                    salt: [0u8; 32].into(),
+                }
+                .abi_encode(),
+            );
+            assert!(
+                check_transaction(&tx(safe, create_call_addr, U256::ZERO, data, 1)),
+                "should allow performCreate2 delegatecall to {create_call_addr}",
             );
         }
     }
