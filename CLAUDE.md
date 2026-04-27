@@ -28,6 +28,7 @@ src/
 │   ├── transactions.rs         # TransactionAttestations monitor
 │   ├── stake.rs                # ValidatorStake + TotalStake monitors
 │   ├── balances.rs             # ValidatorBalances monitor
+│   ├── airdrop.rs              # CumulativeMerkleDropBalance monitor
 │   ├── gas.rs                  # BaseGasFee monitor
 │   └── utils.rs                # approx_units(): U256 → f64 token amount
 └── packets/
@@ -61,6 +62,7 @@ TOML file (default: `config.toml`), selected via `--config <path>`.
 | `staking_rpc`                      | _(required)_     | RPC URL for staking chain (Ethereum mainnet)          |
 | `consensus_contract`               | `0x2236...cEE9`  | Safenet consensus contract address                    |
 | `staking_contract`                 | `0x115E...8509`  | Safenet staking contract address                      |
+| `cumulative_merkle_drop`           | `0xe513...20f2`  | CumulativeMerkleDrop address on the staking chain     |
 | `transaction_attestation_duration` | `30`             | Blocks after which an unattested proposal is recorded |
 | `validators`                       | `[]`             | Array of `{ name = "…", address = "0x…" }`            |
 
@@ -106,6 +108,14 @@ Reads the aggregate stake on the staking contract via a single call to `IStaking
 **Metrics**:
 
 - `safenet_monitor_total_stake` — gauge; total stake in token units (via `utils::approx_units()`).
+
+### CumulativeMerkleDropBalance (`airdrop.rs`)
+
+Reads the rewards token address from the configured CumulativeMerkleDrop contract via `token()` once during monitor initialization, then reads `IERC20.balanceOf(cumulative_merkle_drop)` for that token on the staking chain during each update.
+
+**Metrics**:
+
+- `safenet_monitor_cumulative_merkle_drop_balance` — gauge; token balance held by the CumulativeMerkleDrop contract, in token units (via `utils::approx_units()`).
 
 ### ValidatorBalances (`balances.rs`)
 

@@ -7,11 +7,13 @@ use prometheus::{Encoder, TextEncoder};
 
 mod utils;
 
+pub mod airdrop;
 pub mod balances;
 pub mod gas;
 pub mod stake;
 pub mod transactions;
 
+use airdrop::CumulativeMerkleDropBalance;
 use balances::ValidatorBalances;
 use gas::GasFees;
 use stake::{TotalStake, ValidatorStake};
@@ -38,6 +40,7 @@ struct Inner {
     transactions: TransactionAttestations,
     validator_stake: ValidatorStake,
     total_stake: TotalStake,
+    cumulative_merkle_drop: CumulativeMerkleDropBalance,
     balances: ValidatorBalances,
     gas: GasFees,
 }
@@ -53,6 +56,7 @@ impl Monitor {
         staking_rpc: String,
         consensus_contract: Address,
         staking_contract: Address,
+        cumulative_merkle_drop: Address,
         validators: Vec<Validator>,
         attestation_duration: u64,
     ) -> Result<Self> {
@@ -79,7 +83,9 @@ impl Monitor {
             validators.clone(),
             &registry,
         )?;
-        let total_stake = TotalStake::new(staking, staking_contract, &registry)?;
+        let total_stake = TotalStake::new(staking.clone(), staking_contract, &registry)?;
+        let cumulative_merkle_drop =
+            CumulativeMerkleDropBalance::new(staking, cumulative_merkle_drop, &registry).await?;
         let balances = ValidatorBalances::new(consensus.clone(), validators, &registry)?;
         let gas = GasFees::new(consensus, &registry)?;
 
@@ -88,6 +94,7 @@ impl Monitor {
                 transactions,
                 validator_stake,
                 total_stake,
+                cumulative_merkle_drop,
                 balances,
                 gas,
             }),
@@ -127,6 +134,7 @@ impl Monitor {
             transactions as "transactions",
             validator_stake as "validator stake",
             total_stake as "total stake",
+            cumulative_merkle_drop as "cumulative merkle drop",
             balances as "validator balances",
             gas as "gas fees",
         );
