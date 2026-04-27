@@ -25,6 +25,8 @@ mod bindings {
         function migrateL2WithFallbackHandler();
         function signMessage(bytes message);
         function multiSend(bytes transactions);
+        function performCreate(uint256 value, bytes deploymentData);
+        function performCreate2(uint256 value, bytes deploymentData, bytes32 salt);
     }
 }
 
@@ -65,14 +67,11 @@ fn check_calls(tx: &SafeTransaction) -> bool {
     if tx.data.is_empty() {
         return true;
     }
-    if !tx.value.is_zero() {
-        return false;
-    }
     check_self_calls(tx)
 }
 
-/// Checks that a zero-value self-call targets one of the allowed Safe
-/// management functions (with argument validation where necessary).
+/// Checks that a self-call targets one of the allowed Safe management
+/// functions (with argument validation where necessary).
 fn check_self_calls(tx: &SafeTransaction) -> bool {
     // No-arg checks: any calldata starting with the right selector is allowed.
     if tx
@@ -128,7 +127,7 @@ fn check_self_calls(tx: &SafeTransaction) -> bool {
 /// Delegate calls are restricted to known Safe migration and signing-library
 /// contracts, each with a fixed set of allowed function selectors.
 fn check_delegate_calls(tx: &SafeTransaction) -> bool {
-    if tx.operation != 1 || !tx.value.is_zero() {
+    if tx.operation != 1 {
         return false;
     }
 
@@ -161,13 +160,24 @@ fn check_delegate_calls(tx: &SafeTransaction) -> bool {
         return tx.data.starts_with(&bindings::signMessageCall::SELECTOR);
     }
 
+    const CREATE_CALL_CONTRACTS: &[Address] = &[
+        address!("7cbB62EaA69F79e6873cD1ecB2392971036cFAa4"), // 1.3.0 - canonical
+        address!("B19D6FFc2182150F8Eb585b79D4ABcd7C5640A9d"), // 1.3.0 - eip155
+        address!("9b35Af71d77eaf8d7e40252370304687390A1A52"), // 1.4.1
+        address!("2Ef5ECfbea521449E4De05EDB1ce63B75eDA90B4"), // 1.5.0
+    ];
+    if CREATE_CALL_CONTRACTS.contains(&tx.to) {
+        return tx.data.starts_with(&bindings::performCreateCall::SELECTOR)
+            || tx.data.starts_with(&bindings::performCreate2Call::SELECTOR);
+    }
+
     false
 }
 
 /// Delegate calls to known multi-send contracts are allowed when each packed
 /// sub-transaction passes the appropriate check.
 fn check_multi_send(tx: &SafeTransaction) -> bool {
-    if tx.operation != 1 || !tx.value.is_zero() {
+    if tx.operation != 1 {
         return false;
     }
     let Ok(call) = bindings::multiSendCall::abi_decode(&tx.data) else {
@@ -291,6 +301,19 @@ mod tests {
     }
 
     #[test]
+    fn allows_self_call_with_nonzero_value() {
+        assert!(check_transaction(&tx(
+            address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
+            address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
+            U256::from(1u64),
+            hex(
+                "0xe318b52b0000000000000000000000002dc63c83040669f0adba5f832f713152ba862c97000000000000000000000000e7f8c378df23ebb06d5fc5a33bd471ef510f8cc9000000000000000000000000baf055b4ae60b897649f654df8def87bb4f86299"
+            ),
+            0,
+        )));
+    }
+
+    #[test]
     fn allows_multisend_with_calls_to_other_contracts() {
         assert!(check_transaction(&tx(
             address!("F01888f0677547Ec07cd16c8680e699c96588E6B"),
@@ -333,6 +356,17 @@ mod tests {
             address!("81a45AA50195f0A752159d5198780cDfb8e19732"),
             address!("526643F69b81B008F46d95CD5ced5eC0edFFDaC6"),
             U256::ZERO,
+            hex("0xed007fc6"),
+            1,
+        )));
+    }
+
+    #[test]
+    fn allows_delegate_call_with_nonzero_value() {
+        assert!(check_transaction(&tx(
+            address!("81a45AA50195f0A752159d5198780cDfb8e19732"),
+            address!("526643F69b81B008F46d95CD5ced5eC0edFFDaC6"),
+            U256::from(1u64),
             hex("0xed007fc6"),
             1,
         )));
@@ -455,17 +489,12 @@ mod tests {
     }
 
     #[test]
-    fn denies_multisend_where_last_sub_tx_has_no_data() {
-        // Emulation of a known bug in the `beta` validator release: a multisend
-        // whose final sub-transaction has empty calldata is rejected, even
-        // though the sub-transaction is otherwise valid (e.g. a plain ETH
-        // transfer). We replicate this so our metrics stay consistent with what
-        // validators actually enforce.
+    fn allows_multisend_where_last_sub_tx_has_no_data() {
         let safe = address!("3850cd76006dc6CaCBCBB514995C47Ca8Ad0bb96");
         let recipient = address!("C92E8bdf79f0507f65a392b0ab4667716BFE0110");
 
         let data = multisend(&[pack(0, recipient, U256::from(1u64), &[])]);
-        assert!(!check_transaction(&tx(
+        assert!(check_transaction(&tx(
             safe,
             address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
             U256::ZERO,
@@ -482,6 +511,21 @@ mod tests {
             address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
             U256::ZERO,
             multisend(&[]),
+            1,
+        )));
+    }
+
+    #[test]
+    fn allows_multisend_with_nonzero_value() {
+        let safe = address!("3850cd76006dc6CaCBCBB514995C47Ca8Ad0bb96");
+        let recipient = address!("C92E8bdf79f0507f65a392b0ab4667716BFE0110");
+
+        let data = multisend(&[pack(0, recipient, U256::from(1u64), &[])]);
+        assert!(check_transaction(&tx(
+            safe,
+            address!("40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
+            U256::from(1u64),
+            data,
             1,
         )));
     }
@@ -505,6 +549,43 @@ mod tests {
             assert!(
                 !check_transaction(&tx(safe, multisend_addr, U256::ZERO, data.clone(), 1)),
                 "multisend at {multisend_addr} should deny delegatecall to disallowed target",
+            );
+        }
+    }
+
+    #[test]
+    fn allows_contract_deployment_via_create_call() {
+        let safe = address!("8cf60b289f8d31f737049b590b5e4285ff0bd1d1");
+
+        for create_call_addr in [
+            address!("7cbB62EaA69F79e6873cD1ecB2392971036cFAa4"), // 1.3.0 - canonical
+            address!("B19D6FFc2182150F8Eb585b79D4ABcd7C5640A9d"), // 1.3.0 - eip155
+            address!("9b35Af71d77eaf8d7e40252370304687390A1A52"), // 1.4.1
+            address!("2Ef5ECfbea521449E4De05EDB1ce63B75eDA90B4"), // 1.5.0
+        ] {
+            let data = Bytes::from(
+                bindings::performCreateCall {
+                    value: U256::ZERO,
+                    deploymentData: Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]),
+                }
+                .abi_encode(),
+            );
+            assert!(
+                check_transaction(&tx(safe, create_call_addr, U256::ZERO, data, 1)),
+                "should allow performCreate delegatecall to {create_call_addr}",
+            );
+
+            let data = Bytes::from(
+                bindings::performCreate2Call {
+                    value: U256::ZERO,
+                    deploymentData: Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]),
+                    salt: [0u8; 32].into(),
+                }
+                .abi_encode(),
+            );
+            assert!(
+                check_transaction(&tx(safe, create_call_addr, U256::ZERO, data, 1)),
+                "should allow performCreate2 delegatecall to {create_call_addr}",
             );
         }
     }
