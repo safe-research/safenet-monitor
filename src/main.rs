@@ -39,6 +39,9 @@ struct Config {
     /// Address of the Safenet staking contract on the staking chain.
     #[serde(default = "Config::default_staking_contract")]
     staking_contract: Address,
+    /// Address of the CumulativeMerkleDrop contract on the staking chain.
+    #[serde(default = "Config::default_cumulative_merkle_drop")]
+    cumulative_merkle_drop: Address,
     /// Validators to monitor.
     #[serde(default)]
     validators: Vec<Validator>,
@@ -64,6 +67,12 @@ impl Config {
             .unwrap()
     }
 
+    fn default_cumulative_merkle_drop() -> Address {
+        "0xe5139Fc0FB8eae81e30d8a85C22E88c6757120f2"
+            .parse()
+            .unwrap()
+    }
+
     fn default_transaction_attestation_duration() -> u64 {
         30
     }
@@ -85,6 +94,7 @@ async fn main() {
         staking_rpc = %config.staking_rpc,
         consensus_contract = %config.consensus_contract,
         staking_contract = %config.staking_contract,
+        cumulative_merkle_drop = %config.cumulative_merkle_drop,
         "starting safenet-monitor",
     );
 
@@ -94,6 +104,7 @@ async fn main() {
             config.staking_rpc,
             config.consensus_contract,
             config.staking_contract,
+            config.cumulative_merkle_drop,
             config.validators,
             config.transaction_attestation_duration,
         )
