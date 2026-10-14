@@ -1,7 +1,5 @@
-pub mod checks;
-
 use alloy::{
-    primitives::{Address, B256},
+    primitives::{Address, B256, Bytes},
     sol,
     sol_types::{Eip712Domain, SolStruct as _, eip712_domain},
 };
@@ -9,6 +7,8 @@ use alloy::{
 sol! {
     struct TransactionProposal {
         uint64 epoch;
+        address oracle;
+        bytes oracleData;
         bytes32 safeTxHash;
     }
 }
@@ -26,9 +26,20 @@ impl ConsensusDomain {
     }
 
     /// Computes the EIP-712 signing hash for a `TransactionProposal` message.
-    pub fn transaction_proposal(&self, epoch: u64, safe_tx_hash: B256) -> B256 {
+    ///
+    /// This is the message that validators attest to, and is also used as the
+    /// request ID for the oracle evaluating the transaction.
+    pub fn transaction_proposal(
+        &self,
+        epoch: u64,
+        oracle: Address,
+        oracle_data: Bytes,
+        safe_tx_hash: B256,
+    ) -> B256 {
         TransactionProposal {
             epoch,
+            oracle,
+            oracleData: oracle_data,
             safeTxHash: safe_tx_hash,
         }
         .eip712_signing_hash(&self.0)
@@ -42,15 +53,16 @@ mod tests {
 
     #[test]
     fn transaction_proposal_message() {
-        let domain =
-            ConsensusDomain::new(100, address!("223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9"));
+        let domain = ConsensusDomain::new(1, address!("d8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
         let message = domain.transaction_proposal(
-            31643,
-            b256!("03c23f7abc44935b2f11d79f5095813afb0bb8bb53d8f03b5ee0458ca9968dc7"),
+            1,
+            address!("d8dA6BF26964aF9D7eEd9e03E53415D37aA96045"),
+            Bytes::new(),
+            b256!("fe8b85e8d090b16fe8f142d3c9292dc1fc77daf9eb4af8f7cf4a7707d95f4028"),
         );
         assert_eq!(
             message,
-            b256!("663d11b48bea51e182af1d9293cd00f3cd618ab4bedf62a78f2978f991670d0a"),
+            b256!("5ac4a916cb21b51c5b61c6d4479f7c7477856abecb96e439fb53d5462fb5b3ed"),
         );
     }
 }

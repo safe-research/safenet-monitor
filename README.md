@@ -1,3 +1,3 @@
-# Safenet Beta Monitor Service
+# Safenet Aegis Monitor Service
 
-A service for monitoring the health of the Safenet Beta network.
+A service for monitoring the health of the Safenet Aegis network.

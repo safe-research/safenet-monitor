@@ -51,10 +51,12 @@ pub struct Monitor {
 }
 
 impl Monitor {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         consensus_rpc: String,
         staking_rpc: String,
         consensus_contract: Address,
+        oracles: Vec<Address>,
         staking_contract: Address,
         cumulative_merkle_drop: Address,
         validators: Vec<Validator>,
@@ -71,6 +73,7 @@ impl Monitor {
         let transactions = TransactionAttestations::new(
             consensus.clone(),
             consensus_contract,
+            oracles,
             attestation_duration,
             &registry,
         )

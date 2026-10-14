@@ -36,6 +36,10 @@ struct Config {
     /// Address of the Safenet consensus contract on the consensus chain.
     #[serde(default = "Config::default_consensus_contract")]
     consensus_contract: Address,
+    /// Addresses of the oracle contracts on the consensus chain whose results
+    /// validators honor when attesting transactions.
+    #[serde(default = "Config::default_oracles")]
+    oracles: Vec<Address>,
     /// Address of the Safenet staking contract on the staking chain.
     #[serde(default = "Config::default_staking_contract")]
     staking_contract: Address,
@@ -56,9 +60,17 @@ impl Config {
     }
 
     fn default_consensus_contract() -> Address {
-        "0x223624cBF099e5a8f8cD5aF22aFa424a1d1acEE9"
+        "0xc855761D619f6002923507cE68B84d7689C2aa96"
             .parse()
             .unwrap()
+    }
+
+    fn default_oracles() -> Vec<Address> {
+        vec![
+            "0x4F61B8832978e83b80D69551AEf07557DBE41d03"
+                .parse()
+                .unwrap(),
+        ]
     }
 
     fn default_staking_contract() -> Address {
@@ -93,6 +105,7 @@ async fn main() {
         consensus_rpc = %config.consensus_rpc,
         staking_rpc = %config.staking_rpc,
         consensus_contract = %config.consensus_contract,
+        oracles = ?config.oracles,
         staking_contract = %config.staking_contract,
         cumulative_merkle_drop = %config.cumulative_merkle_drop,
         "starting safenet-monitor",
@@ -103,6 +116,7 @@ async fn main() {
             config.consensus_rpc,
             config.staking_rpc,
             config.consensus_contract,
+            config.oracles,
             config.staking_contract,
             config.cumulative_merkle_drop,
             config.validators,

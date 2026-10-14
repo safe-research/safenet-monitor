@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`safenet-monitor` is a Rust service that watches a Safenet consensus contract on an EVM-compatible blockchain and tracks metrics (e.g., transactions expected to be attested but weren't, validator stake status). It exposes Prometheus metrics over HTTP via Axum.
+`safenet-monitor` is a Rust service that watches a Safenet (Aegis) consensus contract on an EVM-compatible blockchain and tracks metrics (e.g., oracle-approved transactions that weren't attested, validator stake status). It exposes Prometheus metrics over HTTP via Axum.
 
 ## Common Commands
 
@@ -22,7 +22,7 @@ cargo clippy            # Lint code
 ```
 src/
 ├── main.rs                     # CLI args (argh), TOML config, Axum HTTP server
-├── bindings.rs                 # ABI bindings: IConsensus, IStaking (alloy sol!)
+├── bindings.rs                 # ABI bindings: IConsensus, IOracle, IStaking (alloy sol!)
 ├── monitor/
 │   ├── mod.rs                  # Monitor struct, provider setup, update() + encode()
 │   ├── transactions.rs         # TransactionAttestations monitor
@@ -32,10 +32,7 @@ src/
 │   ├── gas.rs                  # BaseGasFee monitor
 │   └── utils.rs                # approx_units(): U256 → f64 token amount
 └── packets/
-    ├── mod.rs                  # ConsensusDomain (EIP-712), TransactionProposal
-    └── checks/
-        ├── mod.rs              # check_transaction() policy engine
-        └── multi_send.rs       # Multi-send decoding (legacy & v1.5.0+)
+    └── mod.rs                  # ConsensusDomain (EIP-712), TransactionProposal
 ```
 
 ## Architecture
@@ -55,16 +52,17 @@ The service is built on:
 
 TOML file (default: `config.toml`), selected via `--config <path>`.
 
-| Field                              | Default          | Description                                           |
-| ---------------------------------- | ---------------- | ----------------------------------------------------- |
-| `metrics_address`                  | `127.0.0.1:3777` | Bind address for Prometheus HTTP server               |
-| `consensus_rpc`                    | _(required)_     | RPC URL for consensus chain (Gnosis)                  |
-| `staking_rpc`                      | _(required)_     | RPC URL for staking chain (Ethereum mainnet)          |
-| `consensus_contract`               | `0x2236...cEE9`  | Safenet consensus contract address                    |
-| `staking_contract`                 | `0x115E...8509`  | Safenet staking contract address                      |
-| `cumulative_merkle_drop`           | `0xe513...20f2`  | CumulativeMerkleDrop address on the staking chain     |
-| `transaction_attestation_duration` | `30`             | Blocks after which an unattested proposal is recorded |
-| `validators`                       | `[]`             | Array of `{ name = "…", address = "0x…" }`            |
+| Field                              | Default             | Description                                             |
+| ---------------------------------- | ------------------- | ------------------------------------------------------- |
+| `metrics_address`                  | `127.0.0.1:3777`    | Bind address for Prometheus HTTP server                 |
+| `consensus_rpc`                    | _(required)_        | RPC URL for consensus chain (Gnosis)                    |
+| `staking_rpc`                      | _(required)_        | RPC URL for staking chain (Ethereum mainnet)            |
+| `consensus_contract`               | `0xc855...aa96`     | Safenet consensus contract address                      |
+| `oracles`                          | `["0x4F61...1d03"]` | Oracle contracts honored by validators (SentinelOracle) |
+| `staking_contract`                 | `0x115E...8509`     | Safenet staking contract address                        |
+| `cumulative_merkle_drop`           | `0xe513...20f2`     | CumulativeMerkleDrop address on the staking chain       |
+| `transaction_attestation_duration` | `30`                | Blocks after which an unattested proposal is recorded   |
+| `validators`                       | `[]`                | Array of `{ name = "…", address = "0x…" }`              |
 
 CLI arguments (via `argh`):
 
@@ -77,15 +75,16 @@ All monitors live in `src/monitor/` and follow the same pattern: a struct with a
 
 ### TransactionAttestations (`transactions.rs`)
 
-Watches for `TransactionProposed` events on the consensus contract. For each proposal it:
+Watches for `TransactionProposed` events on the consensus contract and `OracleResult` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
 
-1. Decodes the event and runs `checks::check_transaction()` to classify it as `valid`/`invalid`.
-2. Waits `attestation_duration` safe-blocks, then calls `getAttestationSignatureId()` (via multicall) to check if it was attested.
-3. Increments a counter with the outcome.
+1. Decodes the event and ignores it if its `oracle` is not one of the configured `oracles` (validators ignore those too). Otherwise it computes the EIP-712 `TransactionProposal(uint64 epoch,address oracle,bytes oracleData,bytes32 safeTxHash)` message, which is also the oracle request ID.
+2. Records the oracle verdict from a matching `OracleResult(requestId = message)` event emitted by the proposal's oracle.
+3. Waits `attestation_duration` safe-blocks, then calls `getAttestationSignatureId()` (via multicall) to check if it was attested.
+4. Increments a counter with the outcome. Validators only attest oracle-approved transactions, so `approved`+`unattested` logs a warning and `rejected`/`unresolved`+`attested` logs an error.
 
 **Metrics**:
 
-- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`valid`, `invalid`}, `result` ∈ {`attested`, `unattested`}. All four combinations are pre-initialized to 0.
+- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`approved`, `rejected`, `unresolved`} (oracle verdict, `unresolved` if no result before the deadline), `result` ∈ {`attested`, `unattested`}. All six combinations are pre-initialized to 0.
 - `safenet_monitor_transactions_last_processed_block` — int gauge; last safe block processed.
 
 **State**: proposals are held in a `HashMap<B256 (EIP-712 message hash), Proposal>` between updates; removed once resolved.
@@ -140,23 +139,6 @@ Fetches the base gas fee on the consensus chain using `eth_feeHistory(1, "latest
 3. Instantiate it inside `Monitor::new()` and add it to the `tokio::join!()` in `Monitor::update()`.
 4. Wire any new config fields through `Config` in `main.rs` and pass them into `Monitor::new()`.
 5. Update this file to include information on the new monitor.
-
-## Transaction Checks
-
-`src/packets/checks/` implements the Safenet transaction policy — a predicate over `IConsensus::SafeTransaction` that decides whether a proposed transaction is valid. The public entry point is:
-
-```rust
-pub fn check_transaction(tx: &SafeTransaction) -> bool
-```
-
-The policy allows:
-
-- **Calls** (`operation = 0`) to any non-self address.
-- **Self-calls** (`operation = 0`, `to = safe`) to a whitelist of Safe management functions (`addOwnerWithThreshold`, `removeOwner`, `swapOwner`, `changeThreshold`, `disableModule`, and address-validated `setFallbackHandler`, `setGuard`, `enableModule`, `setModuleGuard`).
-- **Delegate calls** (`operation = 1`) to known Safe migration contracts and signing libraries.
-- **Multi-send** delegate calls to known `MultiSend` contract addresses, where every packed sub-transaction must itself pass the policy. The `0x218...` and `0xA83...` variants use the v1.5.0+ encoding (zero address in `to` means self-call).
-
-Local `sol!` bindings that are only needed within a module are wrapped in a private `mod bindings { alloy::sol! { ... } }` to avoid polluting the module namespace. Reference them as `bindings::someFunctionCall::SELECTOR` etc. Import `use alloy::sol_types::SolCall as _;` to bring `abi_decode` and `abi_encode` into scope.
 
 ## Deployment
 

@@ -19,14 +19,19 @@ sol! {
 
         event TransactionProposed(
             bytes32 indexed safeTxHash,
-            uint256 indexed chainId,
-            address indexed safe,
+            bytes32 indexed safeId,
+            address indexed oracle,
             uint64 epoch,
+            bytes oracleData,
             SafeTransaction transaction
         );
 
         function getAttestationSignatureId(bytes32 message) external view returns (bytes32 signatureId);
         function getValidatorStaker(address validator) external view returns (address staker);
+    }
+
+    interface IOracle {
+        event OracleResult(bytes32 indexed requestId, address indexed sponsor, bytes result, bool approved);
     }
 
     interface IStaking {
