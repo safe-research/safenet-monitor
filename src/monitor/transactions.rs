@@ -322,8 +322,8 @@ impl TransactionAttestations {
             }
         };
 
-        // Disputed requests do not produce an oracle result until they are
-        // arbitrated, by which point validators will have given up on them.
+        // Disputed requests do not produce an oracle result that validators
+        // attest to.
         let proposal = self.proposals.get(&event.requestId);
         tracing::info!(
             request_id =% event.requestId,
