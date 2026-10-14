@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use alloy::{
     primitives::{Address, B256},
     providers::{CallItem, Provider as _},
-    rpc::types::{BlockNumberOrTag, Filter},
+    rpc::types::{BlockNumberOrTag, Filter, Log},
     sol_types::{SolCall as _, SolEvent as _},
 };
 use anyhow::{Context as _, Result};
@@ -11,14 +11,15 @@ use prometheus::{CounterVec, IntGauge};
 
 use super::Provider;
 use crate::{
-    bindings::IConsensus,
-    packets::{ConsensusDomain, checks},
+    bindings::{IConsensus, IOracle},
+    packets::ConsensusDomain,
 };
 
 struct Proposal {
     safe_tx_hash: B256,
     epoch: u64,
-    valid: bool,
+    oracle: Address,
+    approved: Option<bool>,
     deadline: u64,
 }
 
@@ -27,6 +28,7 @@ struct Proposal {
 pub struct TransactionAttestations {
     provider: Provider,
     contract: Address,
+    oracles: Vec<Address>,
     domain: ConsensusDomain,
     attestation_duration: u64,
     last_processed_block: Option<u64>,
@@ -39,13 +41,14 @@ impl TransactionAttestations {
     pub async fn new(
         provider: Provider,
         contract: Address,
+        oracles: Vec<Address>,
         attestation_duration: u64,
         registry: &prometheus::Registry,
     ) -> Result<Self> {
         let transactions = prometheus::register_counter_vec_with_registry!(
             "transactions",
             "Transactions observed on the Safenet consensus contract, \
-             labelled by validity and attestation outcome.",
+             labelled by oracle verdict and attestation outcome.",
             &["status", "result"],
             registry
         )?;
@@ -57,7 +60,7 @@ impl TransactionAttestations {
 
         // Make sure to intialize all possible labels for our metric, so that
         // we have 0-values instead of "No data" in our queries.
-        for status in ["valid", "invalid"] {
+        for status in ["approved", "rejected", "unresolved"] {
             for result in ["attested", "unattested"] {
                 transactions.with_label_values(&[status, result]).reset();
             }
@@ -69,6 +72,7 @@ impl TransactionAttestations {
         Ok(Self {
             provider,
             contract,
+            oracles,
             domain,
             attestation_duration,
             last_processed_block: None,
@@ -88,56 +92,48 @@ impl TransactionAttestations {
             .header
             .number;
 
-        // Query new transaction proposals.
+        // Query new transaction proposals and oracle results. Logs are
+        // returned in chain order, so a proposal is always registered before
+        // its corresponding oracle result.
         let from_block = self
             .last_processed_block
             .unwrap_or(safe_block)
             .checked_add(1)
             .context("we have reached the heat death of the universe")?;
         if from_block <= safe_block {
-            tracing::debug!(%from_block, to_block =% safe_block, "querying transaction proposals");
+            tracing::debug!(%from_block, to_block =% safe_block, "querying transaction events");
             let filter = Filter::new()
-                .address(self.contract)
-                .event(IConsensus::TransactionProposed::SIGNATURE)
+                .address(
+                    std::iter::once(self.contract)
+                        .chain(self.oracles.iter().copied())
+                        .collect::<Vec<_>>(),
+                )
+                .event_signature(vec![
+                    IConsensus::TransactionProposed::SIGNATURE_HASH,
+                    IOracle::OracleResult::SIGNATURE_HASH,
+                ])
                 .from_block(from_block)
                 .to_block(safe_block);
             let logs = self
                 .provider
                 .get_logs(&filter)
                 .await
-                .context("failed to get TransactionProposed logs")?;
+                .context("failed to get transaction logs")?;
 
             for log in &logs {
-                let event = match IConsensus::TransactionProposed::decode_log(&log.inner) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        tracing::warn!(
-                            transaction =? log.transaction_hash,
-                            error =% err,
-                            "failed to decode TransactionProposed log",
-                        );
-                        continue;
+                match log.topic0() {
+                    Some(&IConsensus::TransactionProposed::SIGNATURE_HASH)
+                        if log.address() == self.contract =>
+                    {
+                        self.on_transaction_proposed(log, safe_block)
                     }
-                };
-
-                let message = self
-                    .domain
-                    .transaction_proposal(event.epoch, event.safeTxHash);
-                let proposal = Proposal {
-                    safe_tx_hash: event.safeTxHash,
-                    epoch: event.epoch,
-                    valid: checks::check_transaction(&event.transaction),
-                    deadline: safe_block + self.attestation_duration,
-                };
-
-                tracing::debug!(
-                    safe_tx_hash =% proposal.safe_tx_hash,
-                    epoch = proposal.epoch,
-                    valid = proposal.valid,
-                    deadline = proposal.deadline,
-                    "registering transaction proposal",
-                );
-                self.proposals.entry(message).or_insert(proposal);
+                    Some(&IOracle::OracleResult::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_oracle_result(log)
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -187,27 +183,31 @@ impl TransactionAttestations {
                     }
                 };
 
+                let status = status_label(proposal.approved);
+                let result = result_label(attested);
                 tracing::debug!(
                     safe_tx_hash =% proposal.safe_tx_hash,
                     epoch = proposal.epoch,
-                    status = status_label(proposal.valid),
-                    result = result_label(attested),
+                    oracle =% proposal.oracle,
+                    status,
+                    result,
                     "recording transaction attestation outcome",
                 );
-                self.transactions
-                    .with_label_values(&[status_label(proposal.valid), result_label(attested)])
-                    .inc();
+                self.transactions.with_label_values(&[status, result]).inc();
 
-                match (proposal.valid, attested) {
-                    (true, false) => tracing::warn!(
+                match (proposal.approved, attested) {
+                    (Some(true), false) => tracing::warn!(
                         safe_tx_hash =% proposal.safe_tx_hash,
                         epoch = proposal.epoch,
-                        "a valid transaction was not attested"
+                        oracle =% proposal.oracle,
+                        "an oracle approved transaction was not attested"
                     ),
-                    (false, true) => tracing::error!(
+                    (Some(false) | None, true) => tracing::error!(
                         safe_tx_hash =% proposal.safe_tx_hash,
                         epoch = proposal.epoch,
-                        "an invalid transaction was attested"
+                        oracle =% proposal.oracle,
+                        status,
+                        "a transaction not approved by the oracle was attested"
                     ),
                     _ => {}
                 }
@@ -216,10 +216,100 @@ impl TransactionAttestations {
 
         Ok(())
     }
+
+    fn on_transaction_proposed(&mut self, log: &Log, safe_block: u64) {
+        let event = match IConsensus::TransactionProposed::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode TransactionProposed log",
+                );
+                return;
+            }
+        };
+
+        // Validators only attest to transactions evaluated by oracles that
+        // they trust, so ignore proposals for any other oracle.
+        if !self.oracles.contains(&event.oracle) {
+            tracing::debug!(
+                safe_tx_hash =% event.safeTxHash,
+                oracle =% event.oracle,
+                "ignoring transaction proposal for unknown oracle",
+            );
+            return;
+        }
+
+        let message = self.domain.transaction_proposal(
+            event.epoch,
+            event.oracle,
+            event.oracleData.clone(),
+            event.safeTxHash,
+        );
+        let proposal = Proposal {
+            safe_tx_hash: event.safeTxHash,
+            epoch: event.epoch,
+            oracle: event.oracle,
+            approved: None,
+            deadline: safe_block + self.attestation_duration,
+        };
+
+        tracing::debug!(
+            safe_tx_hash =% proposal.safe_tx_hash,
+            epoch = proposal.epoch,
+            oracle =% proposal.oracle,
+            deadline = proposal.deadline,
+            "registering transaction proposal",
+        );
+        self.proposals.entry(message).or_insert(proposal);
+    }
+
+    fn on_oracle_result(&mut self, log: &Log) {
+        let event = match IOracle::OracleResult::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode OracleResult log",
+                );
+                return;
+            }
+        };
+
+        // The oracle request ID is the transaction proposal message. Only
+        // accept results from the oracle that the proposal was made for.
+        let Some(proposal) = self
+            .proposals
+            .get_mut(&event.requestId)
+            .filter(|proposal| proposal.oracle == log.address())
+        else {
+            tracing::debug!(
+                request_id =% event.requestId,
+                oracle =% log.address(),
+                "ignoring oracle result for unknown transaction proposal",
+            );
+            return;
+        };
+
+        tracing::debug!(
+            safe_tx_hash =% proposal.safe_tx_hash,
+            epoch = proposal.epoch,
+            oracle =% proposal.oracle,
+            approved = event.approved,
+            "registering oracle result",
+        );
+        proposal.approved = Some(event.approved);
+    }
 }
 
-fn status_label(valid: bool) -> &'static str {
-    if valid { "valid" } else { "invalid" }
+fn status_label(approved: Option<bool>) -> &'static str {
+    match approved {
+        Some(true) => "approved",
+        Some(false) => "rejected",
+        None => "unresolved",
+    }
 }
 
 fn result_label(attested: bool) -> &'static str {
