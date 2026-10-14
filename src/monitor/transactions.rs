@@ -19,7 +19,8 @@ struct Proposal {
     safe_tx_hash: B256,
     epoch: u64,
     oracle: Address,
-    approved: Option<bool>,
+    outcome: Option<Outcome>,
+    oracle_deadline: u64,
     deadline: u64,
 }
 
@@ -30,6 +31,7 @@ pub struct TransactionAttestations {
     contract: Address,
     oracles: Vec<Address>,
     domain: ConsensusDomain,
+    oracle_timeout: u64,
     attestation_duration: u64,
     last_processed_block: Option<u64>,
     proposals: HashMap<B256, Proposal>,
@@ -42,6 +44,7 @@ impl TransactionAttestations {
         provider: Provider,
         contract: Address,
         oracles: Vec<Address>,
+        oracle_timeout: u64,
         attestation_duration: u64,
         registry: &prometheus::Registry,
     ) -> Result<Self> {
@@ -60,7 +63,7 @@ impl TransactionAttestations {
 
         // Make sure to intialize all possible labels for our metric, so that
         // we have 0-values instead of "No data" in our queries.
-        for status in ["approved", "rejected", "unresolved"] {
+        for status in ["approved", "rejected", "timeout", "disputed", "unfinalized"] {
             for result in ["attested", "unattested"] {
                 transactions.with_label_values(&[status, result]).reset();
             }
@@ -74,6 +77,7 @@ impl TransactionAttestations {
             contract,
             oracles,
             domain,
+            oracle_timeout,
             attestation_duration,
             last_processed_block: None,
             proposals: HashMap::new(),
@@ -92,9 +96,9 @@ impl TransactionAttestations {
             .header
             .number;
 
-        // Query new transaction proposals, oracle results and disputes. Logs are
+        // Query new transaction proposals and oracle outcomes. Logs are
         // returned in chain order, so a proposal is always registered before
-        // its corresponding oracle result.
+        // its corresponding oracle outcome.
         let from_block = self
             .last_processed_block
             .unwrap_or(safe_block)
@@ -111,6 +115,7 @@ impl TransactionAttestations {
                 .event_signature(vec![
                     IConsensus::TransactionProposed::SIGNATURE_HASH,
                     IOracle::OracleResult::SIGNATURE_HASH,
+                    ISentinelOracle::RequestTimedOut::SIGNATURE_HASH,
                     ISentinelOracle::DisputeTriggered::SIGNATURE_HASH,
                 ])
                 .from_block(from_block)
@@ -132,6 +137,11 @@ impl TransactionAttestations {
                         if self.oracles.contains(&log.address()) =>
                     {
                         self.on_oracle_result(log)
+                    }
+                    Some(&ISentinelOracle::RequestTimedOut::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_request_timed_out(log)
                     }
                     Some(&ISentinelOracle::DisputeTriggered::SIGNATURE_HASH)
                         if self.oracles.contains(&log.address()) =>
@@ -189,7 +199,7 @@ impl TransactionAttestations {
                     }
                 };
 
-                let status = status_label(proposal.approved);
+                let status = status_label(proposal.outcome);
                 let result = result_label(attested);
                 tracing::debug!(
                     safe_tx_hash =% proposal.safe_tx_hash,
@@ -201,21 +211,21 @@ impl TransactionAttestations {
                 );
                 self.transactions.with_label_values(&[status, result]).inc();
 
-                match (proposal.approved, attested) {
-                    (Some(true), false) => tracing::warn!(
+                match (proposal.outcome, attested) {
+                    (Some(Outcome::Approved), false) => tracing::warn!(
                         safe_tx_hash =% proposal.safe_tx_hash,
                         epoch = proposal.epoch,
                         oracle =% proposal.oracle,
                         "an oracle approved transaction was not attested"
                     ),
-                    (Some(false) | None, true) => tracing::error!(
+                    (Some(Outcome::Approved), true) | (_, false) => {}
+                    (_, true) => tracing::error!(
                         safe_tx_hash =% proposal.safe_tx_hash,
                         epoch = proposal.epoch,
                         oracle =% proposal.oracle,
                         status,
                         "a transaction not approved by the oracle was attested"
                     ),
-                    _ => {}
                 }
             }
         }
@@ -253,18 +263,24 @@ impl TransactionAttestations {
             event.oracleData.clone(),
             event.safeTxHash,
         );
+        // Validators start waiting for the oracle in the proposal block (the
+        // signing request is made in the same transaction), so measure the
+        // deadlines from there.
+        let block = log.block_number.unwrap_or(safe_block);
         let proposal = Proposal {
             safe_tx_hash: event.safeTxHash,
             epoch: event.epoch,
             oracle: event.oracle,
-            approved: None,
-            deadline: safe_block + self.attestation_duration,
+            outcome: None,
+            oracle_deadline: block + self.oracle_timeout,
+            deadline: block + self.attestation_duration,
         };
 
         tracing::debug!(
             safe_tx_hash =% proposal.safe_tx_hash,
             epoch = proposal.epoch,
             oracle =% proposal.oracle,
+            oracle_deadline = proposal.oracle_deadline,
             deadline = proposal.deadline,
             "registering transaction proposal",
         );
@@ -284,32 +300,31 @@ impl TransactionAttestations {
             }
         };
 
-        // The oracle request ID is the transaction proposal message. Only
-        // accept results from the oracle that the proposal was made for.
-        let Some(proposal) = self
-            .proposals
-            .get_mut(&event.requestId)
-            .filter(|proposal| proposal.oracle == log.address())
-        else {
-            tracing::debug!(
-                request_id =% event.requestId,
-                oracle =% log.address(),
-                "ignoring oracle result for unknown transaction proposal",
-            );
-            return;
+        let outcome = if event.approved {
+            Outcome::Approved
+        } else {
+            Outcome::Rejected
         };
-
-        tracing::debug!(
-            safe_tx_hash =% proposal.safe_tx_hash,
-            epoch = proposal.epoch,
-            oracle =% proposal.oracle,
-            approved = event.approved,
-            "registering oracle result",
-        );
-        proposal.approved = Some(event.approved);
+        self.record_outcome(event.requestId, log, outcome);
     }
 
-    fn on_dispute_triggered(&self, log: &Log) {
+    fn on_request_timed_out(&mut self, log: &Log) {
+        let event = match ISentinelOracle::RequestTimedOut::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode RequestTimedOut log",
+                );
+                return;
+            }
+        };
+
+        self.record_outcome(event.requestId, log, Outcome::Timeout);
+    }
+
+    fn on_dispute_triggered(&mut self, log: &Log) {
         let event = match ISentinelOracle::DisputeTriggered::decode_log(&log.inner) {
             Ok(value) => value,
             Err(err) => {
@@ -333,15 +348,83 @@ impl TransactionAttestations {
             epoch =? proposal.map(|p| p.epoch),
             "transaction proposal disputed and requires arbitration",
         );
+
+        self.record_outcome(event.requestId, log, Outcome::Disputed);
+    }
+
+    fn record_outcome(&mut self, request_id: B256, log: &Log, outcome: Outcome) {
+        // The oracle request ID is the transaction proposal message. Only
+        // accept outcomes from the oracle that the proposal was made for.
+        let oracle = log.address();
+        let Some(proposal) = self
+            .proposals
+            .get_mut(&request_id)
+            .filter(|proposal| proposal.oracle == oracle)
+        else {
+            tracing::debug!(
+                request_id =% request_id,
+                oracle =% oracle,
+                outcome = outcome.label(),
+                "ignoring oracle outcome for unknown transaction proposal",
+            );
+            return;
+        };
+
+        // Validators stop waiting for the oracle at the start of the oracle
+        // deadline block (block timeouts are processed before the block's
+        // events), so from their perspective, outcomes from that block onwards
+        // mean the oracle request was never finalized.
+        let block = log.block_number.unwrap_or(u64::MAX);
+        if block >= proposal.oracle_deadline {
+            tracing::debug!(
+                safe_tx_hash =% proposal.safe_tx_hash,
+                epoch = proposal.epoch,
+                oracle =% proposal.oracle,
+                outcome = outcome.label(),
+                block,
+                oracle_deadline = proposal.oracle_deadline,
+                "ignoring oracle outcome after the oracle timeout",
+            );
+            return;
+        }
+
+        tracing::debug!(
+            safe_tx_hash =% proposal.safe_tx_hash,
+            epoch = proposal.epoch,
+            oracle =% proposal.oracle,
+            outcome = outcome.label(),
+            "registering oracle outcome",
+        );
+        proposal.outcome = Some(outcome);
     }
 }
 
-fn status_label(approved: Option<bool>) -> &'static str {
-    match approved {
-        Some(true) => "approved",
-        Some(false) => "rejected",
-        None => "unresolved",
+/// The final state of an oracle request for a transaction proposal.
+#[derive(Clone, Copy)]
+enum Outcome {
+    /// The oracle approved the transaction.
+    Approved,
+    /// The oracle rejected the transaction.
+    Rejected,
+    /// The oracle request timed out without a result.
+    Timeout,
+    /// The oracle request was disputed and requires arbitration.
+    Disputed,
+}
+
+impl Outcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Timeout => "timeout",
+            Self::Disputed => "disputed",
+        }
     }
+}
+
+fn status_label(outcome: Option<Outcome>) -> &'static str {
+    outcome.map_or("unfinalized", Outcome::label)
 }
 
 fn result_label(attested: bool) -> &'static str {

@@ -49,6 +49,10 @@ struct Config {
     /// Validators to monitor.
     #[serde(default)]
     validators: Vec<Validator>,
+    /// Number of blocks after a transaction proposal that validators wait for
+    /// an oracle outcome before giving up on it.
+    #[serde(default = "Config::default_oracle_timeout")]
+    oracle_timeout: u64,
     /// Maximum number of blocks within which a proposed transaction must be attested.
     #[serde(default = "Config::default_transaction_attestation_duration")]
     transaction_attestation_duration: u64,
@@ -85,8 +89,16 @@ impl Config {
             .unwrap()
     }
 
+    fn default_oracle_timeout() -> u64 {
+        24
+    }
+
     fn default_transaction_attestation_duration() -> u64 {
-        30
+        // Worst case for an oracle approved transaction with the default Aegis
+        // validator configuration: 24 blocks of oracle timeout, followed by 6
+        // blocks each for nonce commitments, signature shares and the fallback
+        // attestation, with some extra margin for transaction inclusion.
+        48
     }
 }
 
@@ -120,6 +132,7 @@ async fn main() {
             config.staking_contract,
             config.cumulative_merkle_drop,
             config.validators,
+            config.oracle_timeout,
             config.transaction_attestation_duration,
         )
         .await

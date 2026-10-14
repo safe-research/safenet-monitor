@@ -36,6 +36,7 @@ sol! {
 
     interface ISentinelOracle {
         event DisputeTriggered(bytes32 indexed requestId, uint64 deadline);
+        event RequestTimedOut(bytes32 indexed requestId);
     }
 
     interface IStaking {
