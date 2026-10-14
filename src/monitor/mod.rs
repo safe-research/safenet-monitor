@@ -60,6 +60,7 @@ impl Monitor {
         staking_contract: Address,
         cumulative_merkle_drop: Address,
         validators: Vec<Validator>,
+        oracle_timeout: u64,
         attestation_duration: u64,
     ) -> Result<Self> {
         let registry = prometheus::Registry::new_custom(
@@ -74,6 +75,7 @@ impl Monitor {
             consensus.clone(),
             consensus_contract,
             oracles,
+            oracle_timeout,
             attestation_duration,
             &registry,
         )

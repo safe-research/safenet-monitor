@@ -61,7 +61,8 @@ TOML file (default: `config.toml`), selected via `--config <path>`.
 | `oracles`                          | `["0x4F61...1d03"]` | Oracle contracts honored by validators (SentinelOracle) |
 | `staking_contract`                 | `0x115E...8509`     | Safenet staking contract address                        |
 | `cumulative_merkle_drop`           | `0xe513...20f2`     | CumulativeMerkleDrop address on the staking chain       |
-| `transaction_attestation_duration` | `30`                | Blocks after which an unattested proposal is recorded   |
+| `oracle_timeout`                   | `24`                | Blocks validators wait for an oracle outcome            |
+| `transaction_attestation_duration` | `48`                | Blocks after which an unattested proposal is recorded   |
 | `validators`                       | `[]`                | Array of `{ name = "…", address = "0x…" }`              |
 
 CLI arguments (via `argh`):
@@ -75,18 +76,18 @@ All monitors live in `src/monitor/` and follow the same pattern: a struct with a
 
 ### TransactionAttestations (`transactions.rs`)
 
-Watches for `TransactionProposed` events on the consensus contract and `OracleResult` / `DisputeTriggered` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
+Watches for `TransactionProposed` events on the consensus contract and `OracleResult`, `RequestTimedOut` and `DisputeTriggered` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
 
 1. Decodes the event and ignores it if its `oracle` is not one of the configured `oracles` (validators ignore those too). Otherwise it computes the EIP-712 `TransactionProposal(uint64 epoch,address oracle,bytes oracleData,bytes32 safeTxHash)` message, which is also the oracle request ID.
-2. Records the oracle verdict from a matching `OracleResult(requestId = message)` event emitted by the proposal's oracle.
-3. Waits `attestation_duration` safe-blocks, then calls `getAttestationSignatureId()` (via multicall) to check if it was attested.
-4. Increments a counter with the outcome. Validators only attest oracle-approved transactions, so `approved`+`unattested` logs a warning and `rejected`/`unresolved`+`attested` logs an error.
+2. Records the oracle outcome from a matching event (keyed by `requestId = message`) emitted by the proposal's oracle: `OracleResult` → `approved`/`rejected`, and for the SentinelOracle, `RequestTimedOut` → `timeout` (nobody revealed) and `DisputeTriggered` → `disputed` (votes on both sides, requires arbitration). Any outcome in a block ≥ proposal block + `oracle_timeout` is ignored: validators process block timeouts before that block's events, so from their perspective the oracle request was never finalized.
+3. Waits until the safe block reaches the proposal block + `attestation_duration`, then calls `getAttestationSignatureId()` (via multicall) to check if it was attested.
+4. Increments a counter with the outcome. Validators only attest oracle-approved transactions, so `approved`+`unattested` logs a warning and any other outcome +`attested` logs an error.
 
 Additionally, a `DisputeTriggered` event (SentinelOracle) logs at `info` level with the request ID (the proposal message hash), since a disputed request requires arbitration and won't produce an `OracleResult` in time to be attested.
 
 **Metrics**:
 
-- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`approved`, `rejected`, `unresolved`} (oracle verdict, `unresolved` if no result before the deadline), `result` ∈ {`attested`, `unattested`}. All six combinations are pre-initialized to 0.
+- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`approved`, `rejected`, `timeout`, `disputed`, `unfinalized`} (oracle outcome, `unfinalized` if the oracle request was not finalized before the oracle timeout), `result` ∈ {`attested`, `unattested`}. All ten combinations are pre-initialized to 0. Arbitration of disputed requests (`DisputeResolved`, `ArbitrationTimedOut`, `DisputeOutOfScope`) happens long after validators give up, so it is not tracked.
 - `safenet_monitor_transactions_last_processed_block` — int gauge; last safe block processed.
 
 **State**: proposals are held in a `HashMap<B256 (EIP-712 message hash), Proposal>` between updates; removed once resolved.
