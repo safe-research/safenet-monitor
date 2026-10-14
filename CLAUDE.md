@@ -22,7 +22,7 @@ cargo clippy            # Lint code
 ```
 src/
 ├── main.rs                     # CLI args (argh), TOML config, Axum HTTP server
-├── bindings.rs                 # ABI bindings: IConsensus, IOracle, IStaking (alloy sol!)
+├── bindings.rs                 # ABI bindings: IConsensus, IOracle, ISentinelOracle, IStaking (alloy sol!)
 ├── monitor/
 │   ├── mod.rs                  # Monitor struct, provider setup, update() + encode()
 │   ├── transactions.rs         # TransactionAttestations monitor
@@ -75,12 +75,14 @@ All monitors live in `src/monitor/` and follow the same pattern: a struct with a
 
 ### TransactionAttestations (`transactions.rs`)
 
-Watches for `TransactionProposed` events on the consensus contract and `OracleResult` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
+Watches for `TransactionProposed` events on the consensus contract and `OracleResult` / `DisputeTriggered` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
 
 1. Decodes the event and ignores it if its `oracle` is not one of the configured `oracles` (validators ignore those too). Otherwise it computes the EIP-712 `TransactionProposal(uint64 epoch,address oracle,bytes oracleData,bytes32 safeTxHash)` message, which is also the oracle request ID.
 2. Records the oracle verdict from a matching `OracleResult(requestId = message)` event emitted by the proposal's oracle.
 3. Waits `attestation_duration` safe-blocks, then calls `getAttestationSignatureId()` (via multicall) to check if it was attested.
 4. Increments a counter with the outcome. Validators only attest oracle-approved transactions, so `approved`+`unattested` logs a warning and `rejected`/`unresolved`+`attested` logs an error.
+
+Additionally, a `DisputeTriggered` event (SentinelOracle) logs at `info` level with the request ID (the proposal message hash), since a disputed request requires arbitration and won't produce an `OracleResult` in time to be attested.
 
 **Metrics**:
 
