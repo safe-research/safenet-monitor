@@ -11,7 +11,7 @@ use prometheus::{CounterVec, IntGauge};
 
 use super::Provider;
 use crate::{
-    bindings::{IConsensus, IOracle},
+    bindings::{IConsensus, IOracle, ISentinelOracle},
     packets::ConsensusDomain,
 };
 
@@ -92,7 +92,7 @@ impl TransactionAttestations {
             .header
             .number;
 
-        // Query new transaction proposals and oracle results. Logs are
+        // Query new transaction proposals, oracle results and disputes. Logs are
         // returned in chain order, so a proposal is always registered before
         // its corresponding oracle result.
         let from_block = self
@@ -111,6 +111,7 @@ impl TransactionAttestations {
                 .event_signature(vec![
                     IConsensus::TransactionProposed::SIGNATURE_HASH,
                     IOracle::OracleResult::SIGNATURE_HASH,
+                    ISentinelOracle::DisputeTriggered::SIGNATURE_HASH,
                 ])
                 .from_block(from_block)
                 .to_block(safe_block);
@@ -131,6 +132,11 @@ impl TransactionAttestations {
                         if self.oracles.contains(&log.address()) =>
                     {
                         self.on_oracle_result(log)
+                    }
+                    Some(&ISentinelOracle::DisputeTriggered::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_dispute_triggered(log)
                     }
                     _ => {}
                 }
@@ -301,6 +307,32 @@ impl TransactionAttestations {
             "registering oracle result",
         );
         proposal.approved = Some(event.approved);
+    }
+
+    fn on_dispute_triggered(&self, log: &Log) {
+        let event = match ISentinelOracle::DisputeTriggered::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode DisputeTriggered log",
+                );
+                return;
+            }
+        };
+
+        // Disputed requests do not produce an oracle result that validators
+        // attest to.
+        let proposal = self.proposals.get(&event.requestId);
+        tracing::info!(
+            request_id =% event.requestId,
+            oracle =% log.address(),
+            arbitration_deadline = event.deadline,
+            safe_tx_hash =? proposal.map(|p| p.safe_tx_hash),
+            epoch =? proposal.map(|p| p.epoch),
+            "transaction proposal disputed and requires arbitration",
+        );
     }
 }
 

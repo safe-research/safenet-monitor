@@ -34,6 +34,10 @@ sol! {
         event OracleResult(bytes32 indexed requestId, address indexed sponsor, bytes result, bool approved);
     }
 
+    interface ISentinelOracle {
+        event DisputeTriggered(bytes32 indexed requestId, uint64 deadline);
+    }
+
     interface IStaking {
         function stakes(address staker, address validator) external view returns (uint256 amount);
         function totalStakedAmount() external view returns (uint256 amount);
