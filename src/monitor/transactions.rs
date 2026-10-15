@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::{
+    eips::BlockId,
     primitives::{Address, B256},
     providers::{CallItem, Provider as _},
     rpc::types::{BlockNumberOrTag, Filter, Log},
@@ -176,6 +177,7 @@ impl TransactionAttestations {
                         .allow_failure(true),
                     )
                 })
+                .block(BlockId::latest())
                 .aggregate3()
                 .await
                 .context("failed to fetch attestation signature IDs")?;
