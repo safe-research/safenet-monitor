@@ -71,6 +71,7 @@ impl CumulativeMerkleDropBalance {
             .with_input(bindings::ICumulativeMerkleDrop::tokenCall {}.abi_encode());
         let raw = provider
             .call(tx)
+            .latest()
             .await
             .context("failed to fetch CumulativeMerkleDrop token")?;
 
@@ -90,6 +91,7 @@ impl CumulativeMerkleDropBalance {
         let raw = self
             .provider
             .call(tx)
+            .latest()
             .await
             .context("failed to fetch CumulativeMerkleDrop token balance")?;
 

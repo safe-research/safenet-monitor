@@ -1,4 +1,5 @@
 use alloy::{
+    eips::BlockId,
     providers::{CallItem, MULTICALL3_ADDRESS, Provider as _, bindings::IMulticall3},
     sol_types::SolCall as _,
 };
@@ -59,6 +60,7 @@ impl ValidatorBalances {
                     )
                 },
             )
+            .block(BlockId::latest())
             .aggregate3()
             .await
             .context("failed to fetch balances")?;

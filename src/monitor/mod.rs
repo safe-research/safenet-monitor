@@ -129,7 +129,7 @@ impl Monitor {
 
                 $(
                     if let Err(err) = $submonitor {
-                        tracing::warn!(error = %err, concat!($name, " update failed"));
+                        tracing::warn!(error = %format_args!("{err:#}"), concat!($name, " update failed"));
                     }
                 )*
             };

@@ -1,4 +1,5 @@
 use alloy::{
+    eips::BlockId,
     network::TransactionBuilder as _,
     primitives::Address,
     providers::{CallItem, Provider as _},
@@ -73,6 +74,7 @@ impl ValidatorStake {
                     )
                 },
             )
+            .block(BlockId::latest())
             .aggregate3()
             .await
             .context("failed to fetch validator stakers")?;
@@ -118,6 +120,7 @@ impl ValidatorStake {
                     )
                 },
             )
+            .block(BlockId::latest())
             .aggregate3()
             .await
             .context("failed to fetch stake amounts")?;
@@ -184,6 +187,7 @@ impl TotalStake {
         let raw = self
             .provider
             .call(tx)
+            .latest()
             .await
             .context("failed to fetch total staked amount")?;
         let amount = IStaking::totalStakedAmountCall::abi_decode_returns(&raw)
