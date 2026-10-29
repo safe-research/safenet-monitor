@@ -76,7 +76,7 @@ All monitors live in `src/monitor/` and follow the same pattern: a struct with a
 
 ### TransactionAttestations (`transactions.rs`)
 
-Watches for `TransactionProposed` events on the consensus contract and `OracleResult`, `RequestTimedOut` and `DisputeTriggered` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
+Watches for `TransactionProposed` events on the consensus contract and `OracleResult`, `RequestTimedOut`, `DisputeTriggered`, `DisputeResolved`, `DisputeOutOfScope` and `ArbitrationTimedOut` events on the configured oracles (fetched together in a single `eth_getLogs` call). For each proposal it:
 
 1. Decodes the event and ignores it if its `oracle` is not one of the configured `oracles` (validators ignore those too). Otherwise it computes the EIP-712 `TransactionProposal(uint64 epoch,address oracle,bytes oracleData,bytes32 safeTxHash)` message, which is also the oracle request ID.
 2. Records the oracle outcome from a matching event (keyed by `requestId = message`) emitted by the proposal's oracle: `OracleResult` → `approved`/`rejected`, and for the SentinelOracle, `RequestTimedOut` → `timeout` (nobody revealed) and `DisputeTriggered` → `disputed` (votes on both sides, requires arbitration). Any outcome in a block ≥ proposal block + `oracle_timeout` is ignored: validators process block timeouts before that block's events, so from their perspective the oracle request was never finalized.
@@ -87,7 +87,8 @@ Additionally, a `DisputeTriggered` event (SentinelOracle) logs at `info` level w
 
 **Metrics**:
 
-- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`approved`, `rejected`, `timeout`, `disputed`, `unfinalized`} (oracle outcome, `unfinalized` if the oracle request was not finalized before the oracle timeout), `result` ∈ {`attested`, `unattested`}. All ten combinations are pre-initialized to 0. Arbitration of disputed requests (`DisputeResolved`, `ArbitrationTimedOut`, `DisputeOutOfScope`) happens long after validators give up, so it is not tracked.
+- `safenet_monitor_transactions_total{status, result}` — counter; `status` ∈ {`approved`, `rejected`, `timeout`, `disputed`, `unfinalized`} (oracle outcome, `unfinalized` if the oracle request was not finalized before the oracle timeout), `result` ∈ {`attested`, `unattested`}. All ten combinations are pre-initialized to 0. Arbitration of disputed requests happens long after validators give up, so it does not affect this metric (see `disputes` below).
+- `safenet_monitor_disputes{status}` — counter; dispute lifecycle events on the configured oracles, independent of tracked proposals (arbitration usually happens long after a proposal is resolved). `status` ∈ {`triggered` (`DisputeTriggered`), `approved`/`denied` (`DisputeResolved` in favour of approval — a false positive — or denial — the dispute protected the user), `out_of_scope` (`DisputeOutOfScope`), `timeout` (`ArbitrationTimedOut`)}. All statuses are pre-initialized to 0. Resolutions log at `info` (with the arbitrator's `context`), arbitration timeouts at `warn`.
 - `safenet_monitor_transactions_last_processed_block` — int gauge; last safe block processed.
 
 **State**: proposals are held in a `HashMap<B256 (EIP-712 message hash), Proposal>` between updates; removed once resolved.
