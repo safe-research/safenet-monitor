@@ -1,3 +1,5 @@
+pub mod checks;
+
 use alloy::{
     primitives::{Address, B256, Bytes},
     sol,
