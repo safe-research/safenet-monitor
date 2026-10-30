@@ -45,8 +45,6 @@ pub enum Rule {
     MultiSendDepth,
 }
 
-// TODO: remove once the rules are used by the transaction monitor.
-#[allow(dead_code)]
 impl Rule {
     pub const ALL: [Self; 3] = [
         Self::SettingsChange,
