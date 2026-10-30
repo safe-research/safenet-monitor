@@ -36,6 +36,10 @@ sol! {
 
     interface ISentinelOracle {
         event DisputeTriggered(bytes32 indexed requestId, uint64 deadline);
+        // `outcome` is a `SentinelOracleRequest.State` enum value.
+        event DisputeResolved(bytes32 indexed requestId, uint8 outcome, uint128 slashed, string context);
+        event DisputeOutOfScope(bytes32 indexed requestId, string context);
+        event ArbitrationTimedOut(bytes32 indexed requestId);
         event RequestTimedOut(bytes32 indexed requestId);
     }
 

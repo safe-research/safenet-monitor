@@ -37,6 +37,7 @@ pub struct TransactionAttestations {
     last_processed_block: Option<u64>,
     proposals: HashMap<B256, Proposal>,
     transactions: CounterVec,
+    disputes: CounterVec,
     blocks: IntGauge,
 }
 
@@ -56,6 +57,13 @@ impl TransactionAttestations {
             &["status", "result"],
             registry
         )?;
+        let disputes = prometheus::register_counter_vec_with_registry!(
+            "disputes",
+            "Oracle request disputes observed on the configured oracles, \
+             labelled by arbitration status.",
+            &["status"],
+            registry
+        )?;
         let blocks = prometheus::register_int_gauge_with_registry!(
             "transactions_last_processed_block",
             "Last consensus chain block processed by the transaction attestation monitor.",
@@ -68,6 +76,9 @@ impl TransactionAttestations {
             for result in ["attested", "unattested"] {
                 transactions.with_label_values(&[status, result]).reset();
             }
+        }
+        for status in DISPUTE_STATUSES {
+            disputes.with_label_values(&[status]).reset();
         }
 
         let chain_id = provider.get_chain_id().await?;
@@ -83,6 +94,7 @@ impl TransactionAttestations {
             last_processed_block: None,
             proposals: HashMap::new(),
             transactions,
+            disputes,
             blocks,
         })
     }
@@ -118,6 +130,9 @@ impl TransactionAttestations {
                     IOracle::OracleResult::SIGNATURE_HASH,
                     ISentinelOracle::RequestTimedOut::SIGNATURE_HASH,
                     ISentinelOracle::DisputeTriggered::SIGNATURE_HASH,
+                    ISentinelOracle::DisputeResolved::SIGNATURE_HASH,
+                    ISentinelOracle::DisputeOutOfScope::SIGNATURE_HASH,
+                    ISentinelOracle::ArbitrationTimedOut::SIGNATURE_HASH,
                 ])
                 .from_block(from_block)
                 .to_block(safe_block);
@@ -148,6 +163,21 @@ impl TransactionAttestations {
                         if self.oracles.contains(&log.address()) =>
                     {
                         self.on_dispute_triggered(log)
+                    }
+                    Some(&ISentinelOracle::DisputeResolved::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_dispute_resolved(log)
+                    }
+                    Some(&ISentinelOracle::DisputeOutOfScope::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_dispute_out_of_scope(log)
+                    }
+                    Some(&ISentinelOracle::ArbitrationTimedOut::SIGNATURE_HASH)
+                        if self.oracles.contains(&log.address()) =>
+                    {
+                        self.on_arbitration_timed_out(log)
                     }
                     _ => {}
                 }
@@ -351,7 +381,91 @@ impl TransactionAttestations {
             "transaction proposal disputed and requires arbitration",
         );
 
+        self.disputes.with_label_values(&["triggered"]).inc();
         self.record_outcome(event.requestId, log, Outcome::Disputed);
+    }
+
+    fn on_dispute_resolved(&mut self, log: &Log) {
+        let event = match ISentinelOracle::DisputeResolved::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode DisputeResolved log",
+                );
+                return;
+            }
+        };
+
+        // A dispute resolved in favour of approval was a false positive from
+        // the denying sentinels, while one resolved in favour of denial
+        // protected the user from a malicious transaction.
+        let status = match event.outcome {
+            SENTINEL_ORACLE_STATE_RESOLVED_APPROVED => "approved",
+            SENTINEL_ORACLE_STATE_RESOLVED_DENIED => "denied",
+            outcome => {
+                tracing::warn!(
+                    request_id =% event.requestId,
+                    oracle =% log.address(),
+                    outcome,
+                    "unexpected dispute resolution outcome",
+                );
+                return;
+            }
+        };
+        tracing::info!(
+            request_id =% event.requestId,
+            oracle =% log.address(),
+            status,
+            slashed =% event.slashed,
+            context =% event.context,
+            "dispute resolved by arbitration",
+        );
+        self.disputes.with_label_values(&[status]).inc();
+    }
+
+    fn on_dispute_out_of_scope(&mut self, log: &Log) {
+        let event = match ISentinelOracle::DisputeOutOfScope::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode DisputeOutOfScope log",
+                );
+                return;
+            }
+        };
+
+        tracing::info!(
+            request_id =% event.requestId,
+            oracle =% log.address(),
+            context =% event.context,
+            "dispute declined by arbitrator as out of scope",
+        );
+        self.disputes.with_label_values(&["out_of_scope"]).inc();
+    }
+
+    fn on_arbitration_timed_out(&mut self, log: &Log) {
+        let event = match ISentinelOracle::ArbitrationTimedOut::decode_log(&log.inner) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    transaction =? log.transaction_hash,
+                    error =% err,
+                    "failed to decode ArbitrationTimedOut log",
+                );
+                return;
+            }
+        };
+
+        tracing::warn!(
+            request_id =% event.requestId,
+            oracle =% log.address(),
+            "dispute arbitration timed out",
+        );
+        self.disputes.with_label_values(&["timeout"]).inc();
     }
 
     fn record_outcome(&mut self, request_id: B256, log: &Log, outcome: Outcome) {
@@ -400,6 +514,13 @@ impl TransactionAttestations {
         proposal.outcome = Some(outcome);
     }
 }
+
+/// `SentinelOracleRequest.State` values for resolved requests.
+const SENTINEL_ORACLE_STATE_RESOLVED_APPROVED: u8 = 3;
+const SENTINEL_ORACLE_STATE_RESOLVED_DENIED: u8 = 4;
+
+/// Possible `status` labels for the disputes metric.
+const DISPUTE_STATUSES: [&str; 5] = ["triggered", "approved", "denied", "out_of_scope", "timeout"];
 
 /// The final state of an oracle request for a transaction proposal.
 #[derive(Clone, Copy)]
