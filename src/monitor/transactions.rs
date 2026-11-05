@@ -13,7 +13,10 @@ use prometheus::{CounterVec, IntGauge};
 use super::Provider;
 use crate::{
     bindings::{IConsensus, IOracle, ISentinelOracle},
-    packets::ConsensusDomain,
+    packets::{
+        ConsensusDomain,
+        checks::{self, Rule},
+    },
 };
 
 struct Proposal {
@@ -21,6 +24,7 @@ struct Proposal {
     epoch: u64,
     oracle: Address,
     outcome: Option<Outcome>,
+    violations: Vec<Rule>,
     oracle_deadline: u64,
     deadline: u64,
 }
@@ -38,6 +42,7 @@ pub struct TransactionAttestations {
     proposals: HashMap<B256, Proposal>,
     transactions: CounterVec,
     disputes: CounterVec,
+    violations: CounterVec,
     blocks: IntGauge,
 }
 
@@ -64,6 +69,13 @@ impl TransactionAttestations {
             &["status"],
             registry
         )?;
+        let violations = prometheus::register_counter_vec_with_registry!(
+            "oracle_rule_violations",
+            "Oracle approvals of transaction proposals that obviously violate \
+             a deterministic Safenet charter rule, labelled by rule.",
+            &["rule"],
+            registry
+        )?;
         let blocks = prometheus::register_int_gauge_with_registry!(
             "transactions_last_processed_block",
             "Last consensus chain block processed by the transaction attestation monitor.",
@@ -80,6 +92,9 @@ impl TransactionAttestations {
         for status in DISPUTE_STATUSES {
             disputes.with_label_values(&[status]).reset();
         }
+        for rule in Rule::ALL {
+            violations.with_label_values(&[rule.label()]).reset();
+        }
 
         let chain_id = provider.get_chain_id().await?;
         let domain = ConsensusDomain::new(chain_id, contract);
@@ -95,6 +110,7 @@ impl TransactionAttestations {
             proposals: HashMap::new(),
             transactions,
             disputes,
+            violations,
             blocks,
         })
     }
@@ -299,11 +315,22 @@ impl TransactionAttestations {
         // signing request is made in the same transaction), so measure the
         // deadlines from there.
         let block = log.block_number.unwrap_or(safe_block);
+        let violations = checks::check_transaction(&event.transaction);
+        if !violations.is_empty() {
+            tracing::debug!(
+                safe_tx_hash =% event.safeTxHash,
+                epoch = event.epoch,
+                oracle =% event.oracle,
+                rules =? violations.iter().map(|rule| rule.label()).collect::<Vec<_>>(),
+                "transaction proposal violates charter rules",
+            );
+        }
         let proposal = Proposal {
             safe_tx_hash: event.safeTxHash,
             epoch: event.epoch,
             oracle: event.oracle,
             outcome: None,
+            violations,
             oracle_deadline: block + self.oracle_timeout,
             deadline: block + self.attestation_duration,
         };
@@ -485,6 +512,23 @@ impl TransactionAttestations {
             );
             return;
         };
+
+        // An oracle approving a transaction that obviously violates the
+        // charter is a strong indication of misbehaving sentinels. Record it
+        // regardless of the oracle timeout, since the result is still final.
+        if matches!(outcome, Outcome::Approved) {
+            for rule in &proposal.violations {
+                tracing::error!(
+                    safe_tx_hash =% proposal.safe_tx_hash,
+                    epoch = proposal.epoch,
+                    oracle =% proposal.oracle,
+                    rule = rule.label(),
+                    charter_rule = rule.charter_id(),
+                    "oracle approved a transaction that violates a rule",
+                );
+                self.violations.with_label_values(&[rule.label()]).inc();
+            }
+        }
 
         // Validators stop waiting for the oracle at the start of the oracle
         // deadline block (block timeouts are processed before the block's

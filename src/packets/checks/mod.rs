@@ -41,8 +41,6 @@ pub enum Rule {
     Delegatecall,
 }
 
-// TODO: remove once the rules are used by the transaction monitor.
-#[allow(dead_code)]
 impl Rule {
     pub const ALL: [Self; 2] = [Self::SettingsChange, Self::Delegatecall];
 
