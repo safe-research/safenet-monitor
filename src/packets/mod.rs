@@ -1,3 +1,7 @@
+// TODO: remove once the checks are used by the transaction monitor.
+#[allow(dead_code)]
+pub mod checks;
+
 use alloy::{
     primitives::{Address, B256, Bytes},
     sol,
