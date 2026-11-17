@@ -1,5 +1,6 @@
-// TODO: remove once the checks are used by the transaction monitor.
-#[allow(dead_code)]
+// TODO: remove once the checks are used by the transaction monitor (they are
+// only used by tests for now).
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod checks;
 
 use alloy::{
